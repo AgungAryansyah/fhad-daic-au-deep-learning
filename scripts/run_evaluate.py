@@ -1,0 +1,50 @@
+import sys
+from pathlib import Path
+
+import torch
+from torch.utils.data import DataLoader
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from fhad_tcn.config import get_feature_cols, load_config
+from fhad_tcn.dataset import AUWindowDataset, apply_scaler, fit_scaler, load_sessions, slide_windows
+from fhad_tcn.evaluate import load_checkpoint, run_evaluation
+from fhad_tcn.model import TCN
+
+
+def main() -> None:
+    cfg = load_config()
+    feature_cols = get_feature_cols(cfg)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+
+    train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
+    dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
+
+    scaler = fit_scaler(train_sessions)
+    dev_sessions = apply_scaler(dev_sessions, scaler)
+
+    w_cfg = cfg["windowing"]
+    dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+
+    t_cfg = cfg["training"]
+    dev_loader = DataLoader(AUWindowDataset(dev_X, dev_y), batch_size=t_cfg["batch_size"])
+
+    tcn_cfg = cfg["tcn"]
+    model = TCN(
+        num_inputs=len(feature_cols),
+        num_channels=tcn_cfg["num_channels"],
+        kernel_size=tcn_cfg["kernel_size"],
+        dropout=tcn_cfg["dropout"],
+        num_classes=t_cfg["num_classes"],
+    ).to(device)
+
+    checkpoint_path = Path(cfg["data"]["checkpoints_dir"]) / "best.pt"
+    epoch = load_checkpoint(model, checkpoint_path, device)
+    print(f"Loaded checkpoint from epoch {epoch}")
+
+    run_evaluation(model, dev_loader, device, class_names=["not depressed", "depressed"])
+
+
+if __name__ == "__main__":
+    main()
