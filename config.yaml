@@ -1,0 +1,67 @@
+data:
+  cleaned_data_root: "../output"
+  train_dir: "../output/train"
+  dev_dir: "../output/dev"
+  checkpoints_dir: "checkpoints"
+
+features:
+  au_regression:
+    - AU01_r
+    - AU02_r
+    - AU04_r
+    - AU05_r
+    - AU06_r
+    - AU07_r
+    - AU09_r
+    - AU10_r
+    - AU12_r
+    - AU14_r
+    - AU15_r
+    - AU17_r
+    - AU20_r
+    - AU23_r
+    - AU25_r
+    - AU26_r
+    - AU45_r
+  au_binary:
+    - AU01_c
+    - AU02_c
+    - AU04_c
+    - AU05_c
+    - AU06_c
+    - AU07_c
+    - AU09_c
+    - AU10_c
+    - AU12_c
+    - AU14_c
+    - AU15_c
+    - AU17_c
+    - AU20_c
+    - AU23_c
+    - AU25_c
+    - AU26_c
+    - AU28_c
+    - AU45_c
+  pose:
+    - pose_Rx
+    - pose_Ry
+    - pose_Rz
+    - pose_Tx
+    - pose_Ty
+    - pose_Tz
+
+windowing:
+  window_size: 300
+  stride: 150
+
+training:
+  num_classes: 2
+  batch_size: 64
+  learning_rate: 0.001
+  num_epochs: 50
+  early_stopping_patience: 7
+
+tcn:
+  num_channels: [64, 128, 128]
+  kernel_size: 7
+  dropout: 0.2
