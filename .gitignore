@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.pt
+*.pth
+checkpoints/
+runs/
+*.log
+.DS_Store
