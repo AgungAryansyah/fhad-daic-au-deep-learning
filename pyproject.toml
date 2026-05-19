@@ -1,0 +1,16 @@
+[project]
+name = "fhad-daic-au-deep-learning"
+version = "0.1.0"
+description = "TCN-based depression detection from facial AU sequences for federated health affective detection research."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0.0",
+    "pandas>=2.2.0",
+    "scikit-learn>=1.5.0",
+    "torch>=2.3.0",
+    "tqdm>=4.66.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
