@@ -60,5 +60,6 @@ class AUWindowDataset(Dataset):
 
 def compute_class_weights(labels: np.ndarray, num_classes: int) -> torch.Tensor:
     counts = np.bincount(labels, minlength=num_classes).astype(np.float32)
+    counts = np.clip(counts, a_min=1, a_max=None)
     weights = counts.sum() / (num_classes * counts)
     return torch.from_numpy(weights)
