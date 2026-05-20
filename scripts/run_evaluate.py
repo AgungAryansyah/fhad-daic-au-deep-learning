@@ -1,4 +1,5 @@
 import argparse
+import pickle
 import sys
 from pathlib import Path
 
@@ -28,14 +29,26 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
-    dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
+    dev_pkl = Path("windowed_dev.pkl")
 
-    scaler = fit_scaler(train_sessions)
-    dev_sessions = apply_scaler(dev_sessions, scaler)
+    if dev_pkl.exists():
+        print("Loading cached windowed data...")
+        with open(dev_pkl, "rb") as f:
+            dev_X, dev_y = pickle.load(f)
+    else:
+        print("Computing windowed data...")
+        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
+        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
 
-    w_cfg = cfg["windowing"]
-    dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+        scaler = fit_scaler(train_sessions)
+        dev_sessions = apply_scaler(dev_sessions, scaler)
+
+        w_cfg = cfg["windowing"]
+        dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+
+        with open(dev_pkl, "wb") as f:
+            pickle.dump((dev_X, dev_y), f)
+        print(f"Saved windowed data to {dev_pkl}")
 
     t_cfg = cfg["training"]
     dev_loader = DataLoader(AUWindowDataset(dev_X, dev_y), batch_size=t_cfg["batch_size"])

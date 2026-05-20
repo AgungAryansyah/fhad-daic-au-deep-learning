@@ -1,4 +1,5 @@
 import argparse
+import pickle
 import sys
 from pathlib import Path
 
@@ -35,16 +36,34 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
-    dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
+    train_pkl = Path("windowed_train.pkl")
+    dev_pkl = Path("windowed_dev.pkl")
 
-    scaler = fit_scaler(train_sessions)
-    train_sessions = apply_scaler(train_sessions, scaler)
-    dev_sessions = apply_scaler(dev_sessions, scaler)
+    if train_pkl.exists() and dev_pkl.exists():
+        print("Loading cached windowed data...")
+        with open(train_pkl, "rb") as f:
+            train_X, train_y = pickle.load(f)
+        with open(dev_pkl, "rb") as f:
+            dev_X, dev_y = pickle.load(f)
+    else:
+        print("Computing windowed data...")
+        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
+        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
 
-    w_cfg = cfg["windowing"]
-    train_X, train_y = slide_windows(train_sessions, w_cfg["window_size"], w_cfg["stride"])
-    dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+        scaler = fit_scaler(train_sessions)
+        train_sessions = apply_scaler(train_sessions, scaler)
+        dev_sessions = apply_scaler(dev_sessions, scaler)
+
+        w_cfg = cfg["windowing"]
+        train_X, train_y = slide_windows(train_sessions, w_cfg["window_size"], w_cfg["stride"])
+        dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+
+        with open(train_pkl, "wb") as f:
+            pickle.dump((train_X, train_y), f)
+        with open(dev_pkl, "wb") as f:
+            pickle.dump((dev_X, dev_y), f)
+        print(f"Saved windowed data to {train_pkl} and {dev_pkl}")
+
 
     t_cfg = cfg["training"]
     num_workers = t_cfg.get("num_workers", 0)
