@@ -13,3 +13,4 @@ runs/
 .DS_Store
 .env
 wandb/
+/data/
