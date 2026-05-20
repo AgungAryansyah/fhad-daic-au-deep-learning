@@ -63,6 +63,7 @@ def main() -> None:
         patience=t_cfg["early_stopping_patience"],
         checkpoint_path=Path(cfg["data"]["checkpoints_dir"]) / "best.pt",
         device=device,
+        config=cfg,
     )
 
     print(f"\nBest dev macro F1: {result['best_dev_f1']:.4f}")

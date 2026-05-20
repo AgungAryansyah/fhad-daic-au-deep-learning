@@ -1,7 +1,10 @@
+import os
 from pathlib import Path
 
 import torch
 import torch.nn as nn
+import wandb
+from dotenv import load_dotenv
 from sklearn.metrics import f1_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -57,7 +60,19 @@ def run_training(
     patience: int,
     checkpoint_path: Path,
     device: torch.device,
+    config: dict | None = None,
 ) -> dict:
+    load_dotenv()
+
+    wandb.init(
+        project=os.getenv("WANDB_PROJECT", "fhad-tcn-depression"),
+        entity=os.getenv("WANDB_ENTITY"),
+        mode=os.getenv("WANDB_MODE", "online"),
+        config=config,
+        name="tcn-baseline",
+        tags=["tcn", "depression", "au-features"],
+    )
+
     best_f1 = 0.0
     epochs_without_improvement = 0
     history = []
@@ -69,15 +84,20 @@ def run_training(
         history.append({"epoch": epoch, "train_loss": train_loss, "dev_loss": dev_loss, "dev_f1": dev_f1})
         tqdm.write(f"Epoch {epoch:3d} | train_loss={train_loss:.4f} | dev_loss={dev_loss:.4f} | dev_f1={dev_f1:.4f}")
 
+        wandb.log({"epoch": epoch, "train/loss": train_loss, "dev/loss": dev_loss, "dev/macro_f1": dev_f1})
+
         if dev_f1 > best_f1:
             best_f1 = dev_f1
             epochs_without_improvement = 0
             checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save({"epoch": epoch, "model_state": model.state_dict(), "dev_f1": dev_f1}, checkpoint_path)
+            wandb.summary["best_dev_f1"] = best_f1
+            wandb.summary["best_epoch"] = epoch
         else:
             epochs_without_improvement += 1
             if epochs_without_improvement >= patience:
                 tqdm.write(f"Early stopping at epoch {epoch}.")
                 break
 
+    wandb.finish()
     return {"best_dev_f1": best_f1, "history": history}
