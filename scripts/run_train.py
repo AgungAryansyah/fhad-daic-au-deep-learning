@@ -47,8 +47,21 @@ def main() -> None:
     dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
 
     t_cfg = cfg["training"]
-    train_loader = DataLoader(AUWindowDataset(train_X, train_y), batch_size=t_cfg["batch_size"], shuffle=True)
-    dev_loader = DataLoader(AUWindowDataset(dev_X, dev_y), batch_size=t_cfg["batch_size"])
+    num_workers = t_cfg.get("num_workers", 0)
+    pin_memory = device.type == "cuda"
+    train_loader = DataLoader(
+        AUWindowDataset(train_X, train_y),
+        batch_size=t_cfg["batch_size"],
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+    dev_loader = DataLoader(
+        AUWindowDataset(dev_X, dev_y),
+        batch_size=t_cfg["batch_size"],
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
 
     tcn_cfg = cfg["tcn"]
     model = TCN(
