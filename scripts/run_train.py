@@ -35,6 +35,10 @@ def main() -> None:
     feature_cols = get_feature_cols(cfg)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"CUDA device count: {torch.cuda.device_count()}")
+        print(f"Current CUDA device: {torch.cuda.current_device()}")
 
     train_pkl = Path("windowed_train.pkl")
     dev_pkl = Path("windowed_dev.pkl")
