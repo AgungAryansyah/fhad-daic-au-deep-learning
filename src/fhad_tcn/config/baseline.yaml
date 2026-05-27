@@ -52,7 +52,7 @@ features:
 
 windowing:
   window_size: 300
-  stride: 150
+  stride: 300
 
 training:
   num_classes: 2
