@@ -97,7 +97,11 @@ def main() -> None:
 
     class_weights = compute_class_weights(train_y, t_cfg["num_classes"]).to(device)
     criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.Adam(model.parameters(), lr=t_cfg["learning_rate"])
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=t_cfg["learning_rate"],
+        weight_decay=tcn_cfg.get("weight_decay", 0.0),
+    )
 
     result = run_training(
         model=model,
