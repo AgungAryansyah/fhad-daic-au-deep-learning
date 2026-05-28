@@ -54,6 +54,13 @@ windowing:
   window_size: 300
   stride: 300
 
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 5
+  min_lr: 0.000001
+
 training:
   num_classes: 2
   batch_size: 256

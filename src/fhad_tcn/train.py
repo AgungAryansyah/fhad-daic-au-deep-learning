@@ -6,6 +6,7 @@ import torch.nn as nn
 import wandb
 from dotenv import load_dotenv
 from sklearn.metrics import f1_score
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -73,6 +74,18 @@ def run_training(
         tags=["tcn", "depression", "au-features"],
     )
 
+    scheduler = None
+    if config and "scheduler" in config:
+        s_cfg = config["scheduler"]
+        if s_cfg.get("type") == "plateau":
+            scheduler = ReduceLROnPlateau(
+                optimizer,
+                mode=s_cfg.get("mode", "min"),
+                factor=s_cfg.get("factor", 0.5),
+                patience=s_cfg.get("patience", 5),
+                min_lr=s_cfg.get("min_lr", 1e-6),
+            )
+
     best_f1 = 0.0
     epochs_without_improvement = 0
     history = []
@@ -81,10 +94,14 @@ def run_training(
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
         dev_loss, dev_f1 = evaluate(model, dev_loader, criterion, device)
 
-        history.append({"epoch": epoch, "train_loss": train_loss, "dev_loss": dev_loss, "dev_f1": dev_f1})
-        tqdm.write(f"Epoch {epoch:3d} | train_loss={train_loss:.4f} | dev_loss={dev_loss:.4f} | dev_f1={dev_f1:.4f}")
+        current_lr = optimizer.param_groups[0]["lr"]
+        if scheduler:
+            scheduler.step(dev_loss)
 
-        wandb.log({"epoch": epoch, "train/loss": train_loss, "dev/loss": dev_loss, "dev/macro_f1": dev_f1})
+        history.append({"epoch": epoch, "train_loss": train_loss, "dev_loss": dev_loss, "dev_f1": dev_f1, "lr": current_lr})
+        tqdm.write(f"Epoch {epoch:3d} | train_loss={train_loss:.4f} | dev_loss={dev_loss:.4f} | dev_f1={dev_f1:.4f} | lr={current_lr:.2e}")
+
+        wandb.log({"epoch": epoch, "train/loss": train_loss, "dev/loss": dev_loss, "dev/macro_f1": dev_f1, "lr": current_lr})
 
         if dev_f1 > best_f1:
             best_f1 = dev_f1
