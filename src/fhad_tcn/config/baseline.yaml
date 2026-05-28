@@ -51,8 +51,8 @@ features:
     - pose_Tz
 
 windowing:
-  window_size: 300
-  stride: 300
+  window_size: 150
+  stride: 75
 
 scheduler:
   type: "plateau"
