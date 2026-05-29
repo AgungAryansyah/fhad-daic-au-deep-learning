@@ -11,6 +11,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 from fhad_tcn.config import get_feature_cols
+from fhad_tcn.cross_validation import run_loso_cv_mlp
 from fhad_tcn.dataset import (
     AUWindowDataset,
     MILWindowDataset,
@@ -47,6 +48,18 @@ def main() -> None:
     is_functional = cfg.get("training", {}).get("model_type") == "functional"
 
     t_cfg = cfg["training"]
+
+    cv_mode = t_cfg.get("cv_mode")
+    if cv_mode == "loso":
+        result = run_loso_cv_mlp(
+            train_dir=Path(cfg["data"]["train_dir"]),
+            dev_dir=Path(cfg["data"]["dev_dir"]),
+            feature_cols=feature_cols,
+            cfg=cfg,
+            device=device,
+        )
+        print(f"\nLOSO CV macro F1: {result['macro_f1']:.4f}")
+        return
 
     if is_functional:
         train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)

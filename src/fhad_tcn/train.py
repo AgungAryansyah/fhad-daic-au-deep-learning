@@ -155,7 +155,8 @@ def run_training(
     history = []
     grad_clip = (config or {}).get("training", {}).get("grad_clip_norm", 0.0)
 
-    for epoch in tqdm(range(1, num_epochs + 1), desc="Training"):
+    bar = tqdm(range(1, num_epochs + 1), desc="Training")
+    for epoch in bar:
         if is_mil:
             train_loss = train_epoch_mil(model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip)
             dev_loss, dev_f1 = evaluate_mil(model, dev_loader, criterion, device)
@@ -168,7 +169,7 @@ def run_training(
             scheduler.step(dev_loss)
 
         history.append({"epoch": epoch, "train_loss": train_loss, "dev_loss": dev_loss, "dev_f1": dev_f1, "lr": current_lr})
-        tqdm.write(f"Epoch {epoch:3d} | train_loss={train_loss:.4f} | dev_loss={dev_loss:.4f} | dev_f1={dev_f1:.4f} | lr={current_lr:.2e}")
+        bar.set_postfix_str(f"loss={train_loss:.3f}/{dev_loss:.3f} f1={dev_f1:.3f} lr={current_lr:.1e}")
 
         wandb.log({"epoch": epoch, "train/loss": train_loss, "dev/loss": dev_loss, "dev/macro_f1": dev_f1, "lr": current_lr})
 
@@ -182,7 +183,7 @@ def run_training(
         else:
             epochs_without_improvement += 1
             if epochs_without_improvement >= patience:
-                tqdm.write(f"Early stopping at epoch {epoch}.")
+                print(f"Early stopping at epoch {epoch}.")
                 break
 
     wandb.finish()
