@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from fhad_tcn.config import get_feature_cols
-from fhad_tcn.cross_validation import run_loso_cv_mlp
-from fhad_tcn.dataset import (
+from fhad_daic.config import get_feature_cols
+from fhad_daic.cross_validation import run_loso_cv_mlp
+from fhad_daic.data import (
     AUWindowDataset,
     MILWindowDataset,
     apply_scaler,
@@ -22,9 +22,9 @@ from fhad_tcn.dataset import (
     load_sessions,
     slide_windows,
 )
-from fhad_tcn.functional_features import extract_functional_features
-from fhad_tcn.model import MLP, MILTCN, TCN
-from fhad_tcn.train import run_training
+from fhad_daic.functional_features import extract_functional_features
+from fhad_daic.models import MLP, MILTCN, TCN
+from fhad_daic.training import run_training
 
 
 def train_config(cfg: dict) -> dict:
@@ -242,7 +242,7 @@ def train_config(cfg: dict) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train TCN for depression detection")
-    parser.add_argument("--config", type=str, default="src/fhad_tcn/config/baseline.yaml")
+    parser.add_argument("--config", type=str, default="src/fhad_daic/config/baseline.yaml")
     args = parser.parse_args()
 
     with open(args.config) as f:

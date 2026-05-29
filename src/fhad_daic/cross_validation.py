@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 from .functional_features import extract_functional_features
-from .model import MLP
+from .models.mlp import MLP
 
 
 def load_sessions_with_ids(

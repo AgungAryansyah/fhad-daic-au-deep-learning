@@ -10,15 +10,15 @@ from torch.utils.data import DataLoader
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from fhad_tcn.config import get_feature_cols
-from fhad_tcn.dataset import AUWindowDataset, apply_scaler, fit_scaler, load_sessions, slide_windows
-from fhad_tcn.evaluate import load_checkpoint, run_evaluation
-from fhad_tcn.model import TCN
+from fhad_daic.config import get_feature_cols
+from fhad_daic.data import AUWindowDataset, apply_scaler, fit_scaler, load_sessions, slide_windows
+from fhad_daic.evaluate import load_checkpoint, run_evaluation
+from fhad_daic.models import TCN
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate TCN for depression detection")
-    parser.add_argument("--config", type=str, default="src/fhad_tcn/config/baseline.yaml")
+    parser.add_argument("--config", type=str, default="src/fhad_daic/config/baseline.yaml")
     args = parser.parse_args()
 
     with open(args.config) as f:
