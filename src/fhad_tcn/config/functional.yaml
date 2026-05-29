@@ -1,3 +1,10 @@
+experiment_name: "mlp-functional"
+tags:
+  - mlp
+  - functional-features
+  - statistical
+  - overfit-mitigation
+
 data:
   cleaned_data_root: "data"
   train_dir: "data/train"

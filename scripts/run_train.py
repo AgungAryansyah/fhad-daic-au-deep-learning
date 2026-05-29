@@ -27,15 +27,7 @@ from fhad_tcn.model import MLP, MILTCN, TCN
 from fhad_tcn.train import run_training
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Train TCN for depression detection")
-    parser.add_argument("--config", type=str, default="src/fhad_tcn/config/baseline.yaml")
-    args = parser.parse_args()
-
-    with open(args.config) as f:
-        cfg = yaml.safe_load(f)
-    print(f"Loading config from: {args.config}")
-
+def train_config(cfg: dict) -> dict:
     feature_cols = get_feature_cols(cfg)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -59,7 +51,7 @@ def main() -> None:
             device=device,
         )
         print(f"\nLOSO CV macro F1: {result['macro_f1']:.4f}")
-        return
+        return result
 
     if is_functional:
         train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
@@ -115,7 +107,7 @@ def main() -> None:
         )
 
         print(f"\nBest dev macro F1: {result['best_dev_f1']:.4f}")
-        return
+        return result
 
     if is_mil:
         train_pkl = Path("windowed_train_mil.pkl")
@@ -245,6 +237,18 @@ def main() -> None:
     )
 
     print(f"\nBest dev macro F1: {result['best_dev_f1']:.4f}")
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Train TCN for depression detection")
+    parser.add_argument("--config", type=str, default="src/fhad_tcn/config/baseline.yaml")
+    args = parser.parse_args()
+
+    with open(args.config) as f:
+        cfg = yaml.safe_load(f)
+    print(f"Loading config from: {args.config}")
+    train_config(cfg)
 
 
 if __name__ == "__main__":

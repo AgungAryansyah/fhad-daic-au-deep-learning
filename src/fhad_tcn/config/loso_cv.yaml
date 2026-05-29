@@ -1,3 +1,11 @@
+experiment_name: "loso-cv-mlp"
+tags:
+  - mlp
+  - loso
+  - cross-validation
+  - functional-features
+  - overfit-mitigation
+
 data:
   cleaned_data_root: "data"
   train_dir: "data/train"

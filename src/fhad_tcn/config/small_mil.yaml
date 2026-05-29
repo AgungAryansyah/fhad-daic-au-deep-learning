@@ -1,3 +1,11 @@
+experiment_name: "tcn-mil-small"
+tags:
+  - tcn
+  - mil
+  - attention-pooling
+  - small-model
+  - overfit-mitigation
+
 data:
   cleaned_data_root: "data"
   train_dir: "data/train"

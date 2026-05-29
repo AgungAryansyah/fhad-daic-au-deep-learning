@@ -11,6 +11,12 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 
+def _build_tags(config: dict | None) -> list[str]:
+    base = ["tcn", "depression", "au-features"]
+    extra = (config or {}).get("tags", [])
+    return base + [t for t in extra if t not in base]
+
+
 def get_bag_labels(y: torch.Tensor, sids: torch.Tensor) -> torch.Tensor:
     unique_sids, inverse = torch.unique(sids, sorted=True, return_inverse=True)
     n_bags = len(unique_sids)
@@ -134,8 +140,8 @@ def run_training(
         entity=os.getenv("WANDB_ENTITY"),
         mode=os.getenv("WANDB_MODE", "online"),
         config=config,
-        name="tcn-baseline",
-        tags=["tcn", "depression", "au-features"],
+        name=(config or {}).get("experiment_name", "tcn-experiment"),
+        tags=_build_tags(config),
     )
 
     scheduler = None
