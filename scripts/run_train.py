@@ -96,7 +96,8 @@ def main() -> None:
     ).to(device)
 
     class_weights = compute_class_weights(train_y, t_cfg["num_classes"]).to(device)
-    criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
+    label_smoothing = t_cfg.get("label_smoothing", 0.0)
+    criterion = torch.nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=t_cfg["learning_rate"],

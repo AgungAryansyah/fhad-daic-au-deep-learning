@@ -68,6 +68,8 @@ training:
   learning_rate: 0.00005
   num_epochs: 50
   early_stopping_patience: 3
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1
 
 tcn:
   num_channels: [32, 64, 64]

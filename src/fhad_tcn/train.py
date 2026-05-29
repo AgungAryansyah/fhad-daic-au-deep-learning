@@ -17,6 +17,7 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     device: torch.device,
+    max_grad_norm: float = 0.0,
 ) -> float:
     model.train()
     total_loss = 0.0
@@ -25,6 +26,8 @@ def train_epoch(
         optimizer.zero_grad()
         loss = criterion(model(X), y)
         loss.backward()
+        if max_grad_norm > 0:
+            nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
         optimizer.step()
         total_loss += loss.item() * len(y)
     return total_loss / len(loader.dataset)
@@ -89,9 +92,10 @@ def run_training(
     best_f1 = 0.0
     epochs_without_improvement = 0
     history = []
+    grad_clip = (config or {}).get("training", {}).get("grad_clip_norm", 0.0)
 
     for epoch in tqdm(range(1, num_epochs + 1), desc="Training"):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip)
         dev_loss, dev_f1 = evaluate(model, dev_loader, criterion, device)
 
         current_lr = optimizer.param_groups[0]["lr"]
