@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 
 def _build_tags(config: dict | None) -> list[str]:
-    base = ["tcn", "depression", "au-features"]
+    base = ["fhad-daic", "depression-detection"]
     extra = (config or {}).get("tags", [])
     return base + [t for t in extra if t not in base]
 

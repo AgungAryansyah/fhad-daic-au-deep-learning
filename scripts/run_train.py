@@ -23,7 +23,7 @@ from fhad_daic.data import (
     slide_windows,
 )
 from fhad_daic.functional_features import extract_functional_features
-from fhad_daic.models import MLP, MILTCN, TCN
+from fhad_daic.models import GRUModel, MLP, MILTCN, TCN
 from fhad_daic.training import run_training
 
 
@@ -38,6 +38,7 @@ def train_config(cfg: dict) -> dict:
 
     is_mil = cfg.get("training", {}).get("model_type") == "mil"
     is_functional = cfg.get("training", {}).get("model_type") == "functional"
+    is_gru = cfg.get("training", {}).get("model_type") == "gru"
 
     t_cfg = cfg["training"]
 
@@ -193,25 +194,38 @@ def train_config(cfg: dict) -> dict:
             pin_memory=pin_memory,
         )
 
-    tcn_cfg = cfg["tcn"]
-    if is_mil:
-        attn_dim = cfg.get("mil", {}).get("attn_dim", 64)
-        model = MILTCN(
+    if is_gru:
+        gru_cfg = cfg["gru"]
+        model = GRUModel(
             num_inputs=len(feature_cols),
-            num_channels=tcn_cfg["num_channels"],
-            kernel_size=tcn_cfg["kernel_size"],
-            dropout=tcn_cfg["dropout"],
+            hidden_size=gru_cfg["hidden_size"],
+            num_layers=gru_cfg["num_layers"],
+            dropout=gru_cfg["dropout"],
             num_classes=t_cfg["num_classes"],
-            attn_dim=attn_dim,
+            bidirectional=gru_cfg.get("bidirectional", True),
         ).to(device)
+        weight_decay = gru_cfg.get("weight_decay", 0.0)
     else:
-        model = TCN(
-            num_inputs=len(feature_cols),
-            num_channels=tcn_cfg["num_channels"],
-            kernel_size=tcn_cfg["kernel_size"],
-            dropout=tcn_cfg["dropout"],
-            num_classes=t_cfg["num_classes"],
-        ).to(device)
+        tcn_cfg = cfg["tcn"]
+        weight_decay = tcn_cfg.get("weight_decay", 0.0)
+        if is_mil:
+            attn_dim = cfg.get("mil", {}).get("attn_dim", 64)
+            model = MILTCN(
+                num_inputs=len(feature_cols),
+                num_channels=tcn_cfg["num_channels"],
+                kernel_size=tcn_cfg["kernel_size"],
+                dropout=tcn_cfg["dropout"],
+                num_classes=t_cfg["num_classes"],
+                attn_dim=attn_dim,
+            ).to(device)
+        else:
+            model = TCN(
+                num_inputs=len(feature_cols),
+                num_channels=tcn_cfg["num_channels"],
+                kernel_size=tcn_cfg["kernel_size"],
+                dropout=tcn_cfg["dropout"],
+                num_classes=t_cfg["num_classes"],
+            ).to(device)
 
     class_weights = compute_class_weights(train_y, t_cfg["num_classes"]).to(device)
     label_smoothing = t_cfg.get("label_smoothing", 0.0)
@@ -219,7 +233,7 @@ def train_config(cfg: dict) -> dict:
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=t_cfg["learning_rate"],
-        weight_decay=tcn_cfg.get("weight_decay", 0.0),
+        weight_decay=weight_decay,
     )
 
     result = run_training(
