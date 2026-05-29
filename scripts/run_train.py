@@ -21,7 +21,8 @@ from fhad_tcn.dataset import (
     load_sessions,
     slide_windows,
 )
-from fhad_tcn.model import MILTCN, TCN
+from fhad_tcn.functional_features import extract_functional_features
+from fhad_tcn.model import MLP, MILTCN, TCN
 from fhad_tcn.train import run_training
 
 
@@ -43,6 +44,65 @@ def main() -> None:
         print(f"Current CUDA device: {torch.cuda.current_device()}")
 
     is_mil = cfg.get("training", {}).get("model_type") == "mil"
+    is_functional = cfg.get("training", {}).get("model_type") == "functional"
+
+    t_cfg = cfg["training"]
+
+    if is_functional:
+        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
+        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
+
+        scaler = fit_scaler(train_sessions)
+        train_sessions = apply_scaler(train_sessions, scaler)
+        dev_sessions = apply_scaler(dev_sessions, scaler)
+
+        print(f"Extracting functional features from {len(train_sessions)} training sessions...")
+        train_X, train_y = extract_functional_features(train_sessions)
+        dev_X, dev_y = extract_functional_features(dev_sessions)
+        print(f"Functional features shape: {train_X.shape[1]}")
+
+        train_loader = DataLoader(
+            AUWindowDataset(train_X, train_y),
+            batch_size=len(train_X),
+            shuffle=True,
+        )
+        dev_loader = DataLoader(
+            AUWindowDataset(dev_X, dev_y),
+            batch_size=len(dev_X),
+        )
+
+        mlp_cfg = cfg.get("mlp", {})
+        model = MLP(
+            num_features=train_X.shape[1],
+            hidden_dims=mlp_cfg.get("hidden_dims", [64, 32]),
+            dropout=mlp_cfg.get("dropout", 0.7),
+            num_classes=t_cfg["num_classes"],
+        ).to(device)
+
+        class_weights = compute_class_weights(train_y, t_cfg["num_classes"]).to(device)
+        label_smoothing = t_cfg.get("label_smoothing", 0.0)
+        criterion = torch.nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=t_cfg["learning_rate"],
+            weight_decay=mlp_cfg.get("weight_decay", 0.01),
+        )
+
+        result = run_training(
+            model=model,
+            train_loader=train_loader,
+            dev_loader=dev_loader,
+            criterion=criterion,
+            optimizer=optimizer,
+            num_epochs=t_cfg["num_epochs"],
+            patience=t_cfg["early_stopping_patience"],
+            checkpoint_path=Path(cfg["data"]["checkpoints_dir"]) / "best.pt",
+            device=device,
+            config=cfg,
+        )
+
+        print(f"\nBest dev macro F1: {result['best_dev_f1']:.4f}")
+        return
 
     if is_mil:
         train_pkl = Path("windowed_train_mil.pkl")
@@ -94,7 +154,6 @@ def main() -> None:
             pickle.dump(dev_data, f)
         print(f"Saved windowed data to {train_pkl} and {dev_pkl}")
 
-    t_cfg = cfg["training"]
     num_workers = t_cfg.get("num_workers", 0)
     pin_memory = device.type == "cuda"
 
