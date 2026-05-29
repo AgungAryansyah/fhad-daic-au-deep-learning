@@ -36,14 +36,24 @@ def apply_scaler(
 
 
 def slide_windows(
-    sessions: list[tuple[np.ndarray, int]], window_size: int, stride: int
-) -> tuple[np.ndarray, np.ndarray]:
+    sessions: list[tuple[np.ndarray, int]], window_size: int, stride: int, return_sids: bool = False
+) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
     windows, labels = [], []
-    for X, y in sessions:
+    sids = [] if return_sids else None
+    for sid, (X, y) in enumerate(sessions):
+        n_windows = (len(X) - window_size) // stride + 1
+        if n_windows <= 0:
+            continue
         for start in range(0, len(X) - window_size + 1, stride):
             windows.append(X[start : start + window_size])
             labels.append(y)
-    return np.stack(windows), np.array(labels, dtype=np.int64)
+        if return_sids:
+            sids.extend([sid] * n_windows)
+    X_out = np.stack(windows)
+    y_out = np.array(labels, dtype=np.int64)
+    if return_sids:
+        return X_out, y_out, np.array(sids, dtype=np.int64)
+    return X_out, y_out
 
 
 class AUWindowDataset(Dataset):
@@ -56,6 +66,26 @@ class AUWindowDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         return self.windows[idx], self.labels[idx]
+
+
+class MILWindowDataset(Dataset):
+    def __init__(self, windows: np.ndarray, labels: np.ndarray, session_ids: np.ndarray):
+        self.windows = torch.from_numpy(windows)
+        self.labels = torch.from_numpy(labels)
+        self.session_ids = torch.from_numpy(session_ids)
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return self.windows[idx], self.labels[idx], self.session_ids[idx]
+
+
+def collate_mil(batch: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    X = torch.stack([b[0] for b in batch])
+    y = torch.stack([b[1] for b in batch])
+    sids = torch.stack([b[2] for b in batch])
+    return X, y, sids
 
 
 def compute_class_weights(labels: np.ndarray, num_classes: int) -> torch.Tensor:

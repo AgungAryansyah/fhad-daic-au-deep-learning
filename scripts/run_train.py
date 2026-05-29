@@ -13,13 +13,15 @@ sys.path.insert(0, str(project_root / "src"))
 from fhad_tcn.config import get_feature_cols
 from fhad_tcn.dataset import (
     AUWindowDataset,
+    MILWindowDataset,
     apply_scaler,
+    collate_mil,
     compute_class_weights,
     fit_scaler,
     load_sessions,
     slide_windows,
 )
-from fhad_tcn.model import TCN
+from fhad_tcn.model import MILTCN, TCN
 from fhad_tcn.train import run_training
 
 
@@ -40,15 +42,27 @@ def main() -> None:
         print(f"CUDA device count: {torch.cuda.device_count()}")
         print(f"Current CUDA device: {torch.cuda.current_device()}")
 
-    train_pkl = Path("windowed_train.pkl")
-    dev_pkl = Path("windowed_dev.pkl")
+    is_mil = cfg.get("training", {}).get("model_type") == "mil"
+
+    if is_mil:
+        train_pkl = Path("windowed_train_mil.pkl")
+        dev_pkl = Path("windowed_dev_mil.pkl")
+    else:
+        train_pkl = Path("windowed_train.pkl")
+        dev_pkl = Path("windowed_dev.pkl")
 
     if train_pkl.exists() and dev_pkl.exists():
         print("Loading cached windowed data...")
         with open(train_pkl, "rb") as f:
-            train_X, train_y = pickle.load(f)
+            train_data = pickle.load(f)
         with open(dev_pkl, "rb") as f:
-            dev_X, dev_y = pickle.load(f)
+            dev_data = pickle.load(f)
+        if is_mil:
+            train_X, train_y, train_sids = train_data
+            dev_X, dev_y, dev_sids = dev_data
+        else:
+            train_X, train_y = train_data
+            dev_X, dev_y = dev_data
     else:
         print("Computing windowed data...")
         train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
@@ -59,41 +73,81 @@ def main() -> None:
         dev_sessions = apply_scaler(dev_sessions, scaler)
 
         w_cfg = cfg["windowing"]
-        train_X, train_y = slide_windows(train_sessions, w_cfg["window_size"], w_cfg["stride"])
-        dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+        if is_mil:
+            train_X, train_y, train_sids = slide_windows(
+                train_sessions, w_cfg["window_size"], w_cfg["stride"], return_sids=True
+            )
+            dev_X, dev_y, dev_sids = slide_windows(
+                dev_sessions, w_cfg["window_size"], w_cfg["stride"], return_sids=True
+            )
+            train_data = (train_X, train_y, train_sids)
+            dev_data = (dev_X, dev_y, dev_sids)
+        else:
+            train_X, train_y = slide_windows(train_sessions, w_cfg["window_size"], w_cfg["stride"])
+            dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+            train_data = (train_X, train_y)
+            dev_data = (dev_X, dev_y)
 
         with open(train_pkl, "wb") as f:
-            pickle.dump((train_X, train_y), f)
+            pickle.dump(train_data, f)
         with open(dev_pkl, "wb") as f:
-            pickle.dump((dev_X, dev_y), f)
+            pickle.dump(dev_data, f)
         print(f"Saved windowed data to {train_pkl} and {dev_pkl}")
-
 
     t_cfg = cfg["training"]
     num_workers = t_cfg.get("num_workers", 0)
     pin_memory = device.type == "cuda"
-    train_loader = DataLoader(
-        AUWindowDataset(train_X, train_y),
-        batch_size=t_cfg["batch_size"],
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-    )
-    dev_loader = DataLoader(
-        AUWindowDataset(dev_X, dev_y),
-        batch_size=t_cfg["batch_size"],
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-    )
+
+    if is_mil:
+        train_loader = DataLoader(
+            MILWindowDataset(train_X, train_y, train_sids),
+            batch_size=t_cfg["batch_size"],
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=collate_mil,
+        )
+        dev_loader = DataLoader(
+            MILWindowDataset(dev_X, dev_y, dev_sids),
+            batch_size=t_cfg["batch_size"],
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=collate_mil,
+        )
+    else:
+        train_loader = DataLoader(
+            AUWindowDataset(train_X, train_y),
+            batch_size=t_cfg["batch_size"],
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+        dev_loader = DataLoader(
+            AUWindowDataset(dev_X, dev_y),
+            batch_size=t_cfg["batch_size"],
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
 
     tcn_cfg = cfg["tcn"]
-    model = TCN(
-        num_inputs=len(feature_cols),
-        num_channels=tcn_cfg["num_channels"],
-        kernel_size=tcn_cfg["kernel_size"],
-        dropout=tcn_cfg["dropout"],
-        num_classes=t_cfg["num_classes"],
-    ).to(device)
+    if is_mil:
+        attn_dim = cfg.get("mil", {}).get("attn_dim", 64)
+        model = MILTCN(
+            num_inputs=len(feature_cols),
+            num_channels=tcn_cfg["num_channels"],
+            kernel_size=tcn_cfg["kernel_size"],
+            dropout=tcn_cfg["dropout"],
+            num_classes=t_cfg["num_classes"],
+            attn_dim=attn_dim,
+        ).to(device)
+    else:
+        model = TCN(
+            num_inputs=len(feature_cols),
+            num_channels=tcn_cfg["num_channels"],
+            kernel_size=tcn_cfg["kernel_size"],
+            dropout=tcn_cfg["dropout"],
+            num_classes=t_cfg["num_classes"],
+        ).to(device)
 
     class_weights = compute_class_weights(train_y, t_cfg["num_classes"]).to(device)
     label_smoothing = t_cfg.get("label_smoothing", 0.0)
@@ -115,6 +169,7 @@ def main() -> None:
         checkpoint_path=Path(cfg["data"]["checkpoints_dir"]) / "best.pt",
         device=device,
         config=cfg,
+        is_mil=is_mil,
     )
 
     print(f"\nBest dev macro F1: {result['best_dev_f1']:.4f}")

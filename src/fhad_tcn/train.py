@@ -11,6 +11,16 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 
+def get_bag_labels(y: torch.Tensor, sids: torch.Tensor) -> torch.Tensor:
+    unique_sids, inverse = torch.unique(sids, sorted=True, return_inverse=True)
+    n_bags = len(unique_sids)
+    bag_y = y.new_zeros(n_bags, dtype=y.dtype)
+    for b in range(n_bags):
+        idx = (inverse == b).nonzero(as_tuple=True)[0][0]
+        bag_y[b] = y[idx]
+    return bag_y
+
+
 def train_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -54,6 +64,56 @@ def evaluate(
     return avg_loss, macro_f1
 
 
+def train_epoch_mil(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    max_grad_norm: float = 0.0,
+) -> float:
+    model.train()
+    total_loss = 0.0
+    total_bags = 0
+    for X, y, sids in loader:
+        X, y, sids = X.to(device), y.to(device), sids.to(device)
+        optimizer.zero_grad()
+        logits = model(X, sids)
+        bag_y = get_bag_labels(y, sids)
+        loss = criterion(logits, bag_y)
+        loss.backward()
+        if max_grad_norm > 0:
+            nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+        optimizer.step()
+        total_loss += loss.item() * len(bag_y)
+        total_bags += len(bag_y)
+    return total_loss / max(total_bags, 1)
+
+
+def evaluate_mil(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> tuple[float, float]:
+    model.eval()
+    total_loss = 0.0
+    total_bags = 0
+    all_preds, all_labels = [], []
+    with torch.no_grad():
+        for X, y, sids in loader:
+            X, y, sids = X.to(device), y.to(device), sids.to(device)
+            logits = model(X, sids)
+            bag_y = get_bag_labels(y, sids)
+            total_loss += criterion(logits, bag_y).item() * len(bag_y)
+            total_bags += len(bag_y)
+            all_preds.extend(logits.argmax(dim=1).cpu().tolist())
+            all_labels.extend(bag_y.cpu().tolist())
+    avg_loss = total_loss / max(total_bags, 1)
+    macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
+    return avg_loss, macro_f1
+
+
 def run_training(
     model: nn.Module,
     train_loader: DataLoader,
@@ -65,6 +125,7 @@ def run_training(
     checkpoint_path: Path,
     device: torch.device,
     config: dict | None = None,
+    is_mil: bool = False,
 ) -> dict:
     load_dotenv()
 
@@ -95,8 +156,12 @@ def run_training(
     grad_clip = (config or {}).get("training", {}).get("grad_clip_norm", 0.0)
 
     for epoch in tqdm(range(1, num_epochs + 1), desc="Training"):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip)
-        dev_loss, dev_f1 = evaluate(model, dev_loader, criterion, device)
+        if is_mil:
+            train_loss = train_epoch_mil(model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip)
+            dev_loss, dev_f1 = evaluate_mil(model, dev_loader, criterion, device)
+        else:
+            train_loss = train_epoch(model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip)
+            dev_loss, dev_f1 = evaluate(model, dev_loader, criterion, device)
 
         current_lr = optimizer.param_groups[0]["lr"]
         if scheduler:
