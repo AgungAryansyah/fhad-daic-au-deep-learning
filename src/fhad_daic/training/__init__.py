@@ -1,4 +1,5 @@
 from .train import (
+    CLASS_NAMES,
     _build_tags,
     evaluate,
     evaluate_mil,
@@ -9,6 +10,7 @@ from .train import (
 )
 
 __all__ = [
+    "CLASS_NAMES",
     "_build_tags",
     "evaluate",
     "evaluate_mil",
