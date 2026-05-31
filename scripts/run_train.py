@@ -23,7 +23,7 @@ from fhad_daic.data import (
     slide_windows,
 )
 from fhad_daic.functional_features import extract_functional_features
-from fhad_daic.models import GRUModel, MLP, MILTCN, TCN
+from fhad_daic.models import GRUModel, LSTMModel, MLP, MILTCN, TCN
 from fhad_daic.training import run_training
 
 
@@ -39,6 +39,7 @@ def train_config(cfg: dict) -> dict:
     is_mil = cfg.get("training", {}).get("model_type") == "mil"
     is_functional = cfg.get("training", {}).get("model_type") == "functional"
     is_gru = cfg.get("training", {}).get("model_type") == "gru"
+    is_lstm = cfg.get("training", {}).get("model_type") == "lstm"
 
     t_cfg = cfg["training"]
 
@@ -194,17 +195,27 @@ def train_config(cfg: dict) -> dict:
             pin_memory=pin_memory,
         )
 
-    if is_gru:
-        gru_cfg = cfg["gru"]
-        model = GRUModel(
-            num_inputs=len(feature_cols),
-            hidden_size=gru_cfg["hidden_size"],
-            num_layers=gru_cfg["num_layers"],
-            dropout=gru_cfg["dropout"],
-            num_classes=t_cfg["num_classes"],
-            bidirectional=gru_cfg.get("bidirectional", True),
-        ).to(device)
-        weight_decay = gru_cfg.get("weight_decay", 0.0)
+    if is_gru or is_lstm:
+        rnn_cfg = cfg["gru"] if is_gru else cfg["lstm"]
+        if is_gru:
+            model = GRUModel(
+                num_inputs=len(feature_cols),
+                hidden_size=rnn_cfg["hidden_size"],
+                num_layers=rnn_cfg["num_layers"],
+                dropout=rnn_cfg["dropout"],
+                num_classes=t_cfg["num_classes"],
+                bidirectional=rnn_cfg.get("bidirectional", True),
+            ).to(device)
+        else:
+            model = LSTMModel(
+                num_inputs=len(feature_cols),
+                hidden_size=rnn_cfg["hidden_size"],
+                num_layers=rnn_cfg["num_layers"],
+                dropout=rnn_cfg["dropout"],
+                num_classes=t_cfg["num_classes"],
+                bidirectional=rnn_cfg.get("bidirectional", True),
+            ).to(device)
+        weight_decay = rnn_cfg.get("weight_decay", 0.0)
     else:
         tcn_cfg = cfg["tcn"]
         weight_decay = tcn_cfg.get("weight_decay", 0.0)
