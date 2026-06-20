@@ -1,0 +1,79 @@
+experiment_name: "egemaps-lstm-small"
+tags:
+  - lstm
+  - unidirectional
+  - small
+  - hidden-16
+  - num-layers-1
+  - rnn-dropout-0.5
+  - lr-1e-4
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
+  - w150
+  - s75
+  - modality-egemaps
+  - audio
+
+features:
+  modality: "egemaps"
+  egemaps:
+    - Loudness_sma3
+    - alphaRatio_sma3
+    - hammarbergIndex_sma3
+    - slope0-500_sma3
+    - slope500-1500_sma3
+    - spectralFlux_sma3
+    - mfcc1_sma3
+    - mfcc2_sma3
+    - mfcc3_sma3
+    - mfcc4_sma3
+    - F0semitoneFrom27.5Hz_sma3nz
+    - jitterLocal_sma3nz
+    - shimmerLocaldB_sma3nz
+    - HNRdBACF_sma3nz
+    - logRelF0-H1-H2_sma3nz
+    - logRelF0-H1-A3_sma3nz
+    - F1frequency_sma3nz
+    - F1bandwidth_sma3nz
+    - F1amplitudeLogRelF0_sma3nz
+    - F2frequency_sma3nz
+    - F2amplitudeLogRelF0_sma3nz
+    - F3frequency_sma3nz
+    - F3amplitudeLogRelF0_sma3nz
+
+data:
+  cleaned_data_root: "data"
+  train_dir: "data/train"
+  dev_dir: "data/dev"
+  checkpoints_dir: "checkpoints"
+
+windowing:
+  window_size: 150
+  stride: 75
+
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 5
+  min_lr: 0.000001
+
+lstm:
+  hidden_size: 16
+  num_layers: 1
+  dropout: 0.5
+  bidirectional: false
+
+training:
+  model_type: "lstm"
+  num_classes: 2
+  batch_size: 256
+  num_workers: 12
+  learning_rate: 0.0001
+  num_epochs: 100
+  early_stopping_patience: 15
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1

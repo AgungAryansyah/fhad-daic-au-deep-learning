@@ -55,6 +55,8 @@ def load_sessions(data_dir: Path, feature_cols: list[str], binning: dict | None 
         if missing:
             continue
         X = df[feature_cols].values.astype(np.float32)
+        if modality == "egemaps":
+            X = np.nan_to_num(X, nan=0.0)
 
         if mode == "multiclass":
             y = map_phq_to_bin(float(df["phq_score"].iloc[0]), bins)
