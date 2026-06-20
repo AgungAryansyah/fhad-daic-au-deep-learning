@@ -19,7 +19,7 @@ from fhad_daic.training import get_class_names
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate TCN for depression detection")
-    parser.add_argument("--config", type=str, default="src/fhad_daic/config/baseline.yaml")
+    parser.add_argument("--config", type=str, default="src/fhad_daic/config/visual/baseline.yaml")
     args = parser.parse_args()
 
     with open(args.config) as f:
