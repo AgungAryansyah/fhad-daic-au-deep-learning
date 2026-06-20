@@ -8,13 +8,18 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
+from .data import map_phq_to_bin, resolve_label_mode
 from .functional_features import extract_functional_features
 from .models.mlp import MLP
+from .training import get_class_names
 
 
 def load_sessions_with_ids(
-    data_dirs: list[Path], feature_cols: list[str]
+    data_dirs: list[Path], feature_cols: list[str], binning: dict | None = None
 ) -> dict[int, tuple[np.ndarray, int]]:
+    mode = resolve_label_mode(binning)
+    bins = (binning or {}).get("bins", [])
+
     sessions = {}
     for data_dir in data_dirs:
         for csv_path in sorted(data_dir.glob("*_clean.csv")):
@@ -25,7 +30,12 @@ def load_sessions_with_ids(
             if missing:
                 continue
             X = df[feature_cols].values.astype(np.float32)
-            y = int(df["phq_binary"].iloc[0])
+
+            if mode == "multiclass" and bins:
+                y = map_phq_to_bin(float(df["phq_score"].iloc[0]), bins)
+            else:
+                y = int(df["phq_binary"].iloc[0])
+
             sid = int(csv_path.stem.replace("_clean", ""))
             sessions[sid] = (X, y)
     return sessions
@@ -71,10 +81,13 @@ def run_loso_cv_mlp(
     cfg: dict,
     device: torch.device,
 ) -> dict:
-    all_sessions = load_sessions_with_ids([train_dir, dev_dir], feature_cols)
+    binning = cfg.get("binning")
+    all_sessions = load_sessions_with_ids([train_dir, dev_dir], feature_cols, binning=binning)
     all_sids = sorted(all_sessions.keys())
     n = len(all_sids)
     print(f"\nLOSO CV: {n} labeled sessions")
+
+    class_names = get_class_names(binning)
 
     mlp_cfg = cfg.get("mlp", {})
     t_cfg = cfg["training"]
@@ -138,7 +151,7 @@ def run_loso_cv_mlp(
     print(f"{'='*50}")
     print(f"Macro F1: {macro_f1:.4f}")
     print(f"Accuracy: {accuracy:.4f}")
-    print(classification_report(all_labels, all_preds, target_names=["not depressed", "depressed"], zero_division=0))
+    print(classification_report(all_labels, all_preds, target_names=class_names, zero_division=0))
 
     cm = confusion_matrix(all_labels, all_preds)
     print(f"Confusion matrix:\n{cm}")

@@ -14,6 +14,7 @@ from fhad_daic.config import get_feature_cols
 from fhad_daic.data import AUWindowDataset, apply_scaler, fit_scaler, get_window_cache_path, load_sessions, resolve_label_mode, slide_windows
 from fhad_daic.evaluate import load_checkpoint, run_evaluation
 from fhad_daic.models import TCN
+from fhad_daic.training import get_class_names
 
 
 def main() -> None:
@@ -58,6 +59,8 @@ def main() -> None:
     t_cfg = cfg["training"]
     dev_loader = DataLoader(AUWindowDataset(dev_X, dev_y), batch_size=t_cfg["batch_size"])
 
+    class_names = get_class_names(cfg.get("binning"))
+
     tcn_cfg = cfg["tcn"]
     model = TCN(
         num_inputs=len(feature_cols),
@@ -71,7 +74,7 @@ def main() -> None:
     epoch = load_checkpoint(model, checkpoint_path, device)
     print(f"Loaded checkpoint from epoch {epoch}")
 
-    run_evaluation(model, dev_loader, device, class_names=["not depressed", "depressed"])
+    run_evaluation(model, dev_loader, device, class_names=class_names)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,14 @@ from tqdm import tqdm
 CLASS_NAMES = ["not depressed", "depressed"]
 
 
+def get_class_names(binning: dict | None) -> list[str]:
+    if binning and binning.get("mode") == "phq_multiclass":
+        bins = binning.get("bins", [])
+        if bins:
+            return [b["name"] for b in bins]
+    return CLASS_NAMES
+
+
 def _build_tags(config: dict | None) -> list[str]:
     base = ["fhad-daic", "depression-detection"]
     extra = (config or {}).get("tags", [])
@@ -144,20 +152,20 @@ def evaluate_mil(
     return avg_loss, macro_f1, all_preds, all_labels
 
 
-def _log_dev_metrics(epoch: int, all_preds: list[int], all_labels: list[int]) -> dict:
+def _log_dev_metrics(epoch: int, all_preds: list[int], all_labels: list[int], class_names: list[str]) -> dict:
     metrics = {}
 
     per_class_f1 = f1_score(all_labels, all_preds, average=None, zero_division=0)
     per_class_precision = precision_score(all_labels, all_preds, average=None, zero_division=0)
     per_class_recall = recall_score(all_labels, all_preds, average=None, zero_division=0)
-    for i, name in enumerate(CLASS_NAMES):
+    for i, name in enumerate(class_names):
         metrics[f"dev/f1_{name}"] = float(per_class_f1[i]) if len(per_class_f1) > i else 0.0
         metrics[f"dev/precision_{name}"] = float(per_class_precision[i]) if len(per_class_precision) > i else 0.0
         metrics[f"dev/recall_{name}"] = float(per_class_recall[i]) if len(per_class_recall) > i else 0.0
 
     if epoch > 0:
         metrics["dev/confusion_matrix"] = wandb.plot.confusion_matrix(
-            y_true=all_labels, preds=all_preds, class_names=CLASS_NAMES,
+            y_true=all_labels, preds=all_preds, class_names=class_names,
             title="Confusion Matrix",
         )
         metrics["dev/pred_distribution"] = wandb.Histogram(all_preds)
@@ -188,6 +196,8 @@ def run_training(
     is_mil: bool = False,
 ) -> dict:
     load_dotenv()
+
+    class_names = get_class_names((config or {}).get("binning"))
 
     wandb.init(
         project=os.getenv("WANDB_PROJECT", "fhad-tcn-depression"),
@@ -248,7 +258,7 @@ def run_training(
             "dev/macro_f1": dev_f1,
             "lr": current_lr,
         }
-        metrics.update(_log_dev_metrics(epoch, dev_preds, dev_labels))
+        metrics.update(_log_dev_metrics(epoch, dev_preds, dev_labels, class_names))
         metrics.update(_gpu_memory_mb())
         wandb.log(metrics)
 
