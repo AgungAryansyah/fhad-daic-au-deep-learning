@@ -11,6 +11,7 @@ from .dataset import (
     load_sessions,
     map_phq_to_bin,
     resolve_label_mode,
+    resolve_modality,
     slide_windows,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "load_sessions",
     "map_phq_to_bin",
     "resolve_label_mode",
+    "resolve_modality",
     "slide_windows",
 ]

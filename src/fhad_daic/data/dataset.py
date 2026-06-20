@@ -30,18 +30,24 @@ def resolve_label_mode(binning: dict | None) -> str:
     return "binary"
 
 
-def get_window_cache_path(split: str, window_size: int, stride: int, mil: bool = False, label_mode: str = "binary") -> Path:
+def resolve_modality(features_cfg: dict | None) -> str:
+    return (features_cfg or {}).get("modality", "au")
+
+
+def get_window_cache_path(split: str, window_size: int, stride: int, mil: bool = False, label_mode: str = "binary", modality: str = "au") -> Path:
     prefix = f"{split}_mil" if mil else split
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return CACHE_DIR / f"{prefix}_{window_size}_{stride}_{label_mode}.pkl"
+    return CACHE_DIR / f"{prefix}_{window_size}_{stride}_{label_mode}_{modality}.pkl"
 
 
-def load_sessions(data_dir: Path, feature_cols: list[str], binning: dict | None = None) -> list[tuple[np.ndarray, int]]:
+def load_sessions(data_dir: Path, feature_cols: list[str], binning: dict | None = None, modality: str = "au") -> list[tuple[np.ndarray, int]]:
     sessions = []
     mode = resolve_label_mode(binning)
     bins = (binning or {}).get("bins", DEFAULT_BINS)
 
-    for csv_path in sorted(data_dir.glob("*_clean.csv")):
+    glob_pattern = "*_egemaps_clean.csv" if modality == "egemaps" else "*_clean.csv"
+
+    for csv_path in sorted(data_dir.glob(glob_pattern)):
         df = pd.read_csv(csv_path)
         if df.empty:
             continue
