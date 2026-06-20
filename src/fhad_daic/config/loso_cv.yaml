@@ -4,7 +4,13 @@ tags:
   - loso
   - cross-validation
   - functional-features
-  - overfit-mitigation
+  - hidden-64-32
+  - mlp-dropout-0.7
+  - wd-1e-2
+  - lr-1e-3
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
 
 data:
   cleaned_data_root: "data"

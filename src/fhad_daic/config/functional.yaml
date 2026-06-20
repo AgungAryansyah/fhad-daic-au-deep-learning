@@ -2,8 +2,15 @@ experiment_name: "mlp-functional"
 tags:
   - mlp
   - functional-features
-  - statistical
-  - overfit-mitigation
+  - hidden-64-32
+  - mlp-dropout-0.7
+  - wd-1e-2
+  - lr-1e-3
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
 
 data:
   cleaned_data_root: "data"

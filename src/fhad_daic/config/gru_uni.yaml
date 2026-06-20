@@ -2,9 +2,17 @@ experiment_name: "gru-unidir"
 tags:
   - gru
   - unidirectional
-  - temporal
-  - depression
-  - au-features
+  - hidden-64
+  - num-layers-1
+  - rnn-dropout-0.5
+  - lr-1e-4
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
+  - w150
+  - s75
 
 data:
   cleaned_data_root: "data"

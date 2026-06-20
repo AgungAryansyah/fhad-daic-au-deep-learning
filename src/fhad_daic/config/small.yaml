@@ -2,8 +2,18 @@ experiment_name: "tcn-small"
 tags:
   - tcn
   - small-model
-  - windowed
-  - overfit-mitigation
+  - channels-8-16
+  - kernel-3
+  - dropout-0.7
+  - wd-1e-2
+  - lr-1e-4
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
+  - w150
+  - s75
 
 data:
   cleaned_data_root: "data"

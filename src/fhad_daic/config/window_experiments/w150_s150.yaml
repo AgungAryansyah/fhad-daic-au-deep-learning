@@ -1,8 +1,16 @@
 experiment_name: "tcn-w150-s150"
 tags:
   - tcn
-  - baseline
-  - windowed
+  - channels-32-64-64
+  - kernel-7
+  - dropout-0.5
+  - wd-1e-3
+  - lr-5e-5
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
   - window-experiment
   - w150
   - s150
