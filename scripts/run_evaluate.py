@@ -11,7 +11,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 from fhad_daic.config import get_feature_cols
-from fhad_daic.data import AUWindowDataset, apply_scaler, fit_scaler, get_window_cache_path, load_sessions, resolve_label_mode, slide_windows
+from fhad_daic.data import AUWindowDataset, apply_scaler, fit_scaler, get_window_cache_path, load_sessions, resolve_label_mode, resolve_modality, slide_windows
 from fhad_daic.evaluate import load_checkpoint, run_evaluation
 from fhad_daic.models import TCN
 from fhad_daic.training import get_class_names
@@ -32,11 +32,12 @@ def main() -> None:
 
     binning = cfg.get("binning")
     label_mode = resolve_label_mode(binning)
+    modality = resolve_modality(cfg.get("features"))
 
     w_cfg = cfg["windowing"]
     ws = w_cfg["window_size"]
     st = w_cfg["stride"]
-    dev_pkl = get_window_cache_path("dev", ws, st, label_mode=label_mode)
+    dev_pkl = get_window_cache_path("dev", ws, st, label_mode=label_mode, modality=modality)
 
     if dev_pkl.exists():
         print(f"Loading cached windowed data: {dev_pkl}")
@@ -44,8 +45,8 @@ def main() -> None:
             dev_X, dev_y = pickle.load(f)
     else:
         print(f"Computing windowed data (window={ws}, stride={st})...")
-        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols, binning=binning)
-        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=binning)
+        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols, binning=binning, modality=modality)
+        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=binning, modality=modality)
 
         scaler = fit_scaler(train_sessions)
         dev_sessions = apply_scaler(dev_sessions, scaler)
