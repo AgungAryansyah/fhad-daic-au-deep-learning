@@ -27,16 +27,19 @@ def _build_tags(config: dict | None) -> list[str]:
     base = ["fhad-daic", "depression-detection"]
     extra = (config or {}).get("tags", [])
 
+    auto = []
+
     binning = (config or {}).get("binning", {})
     if binning.get("mode") == "phq_multiclass":
         n_bins = len(binning.get("bins", []))
-        extra = extra + [
-            "multiclass",
-            f"{n_bins}-class",
-            "phq-bins",
-        ]
+        auto.extend(["multiclass", f"{n_bins}-class", "phq-bins"])
 
-    return base + [t for t in extra if t not in base]
+    modality = (config or {}).get("features", {}).get("modality", "au")
+    if modality != "au":
+        auto.append(f"modality-{modality}")
+
+    merged = auto + [t for t in extra if t not in auto]
+    return base + [t for t in merged if t not in base]
 
 
 def _compute_grad_norm(model: nn.Module) -> float:
