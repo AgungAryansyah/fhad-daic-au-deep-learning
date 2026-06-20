@@ -1,0 +1,88 @@
+experiment_name: "tcn-w60-s30"
+tags:
+  - tcn
+  - baseline
+  - windowed
+  - window-experiment
+  - w60
+  - s30
+
+data:
+  cleaned_data_root: "data"
+  train_dir: "data/train"
+  dev_dir: "data/dev"
+  checkpoints_dir: "checkpoints"
+
+features:
+  au_regression:
+    - AU01_r
+    - AU02_r
+    - AU04_r
+    - AU05_r
+    - AU06_r
+    - AU07_r
+    - AU09_r
+    - AU10_r
+    - AU12_r
+    - AU14_r
+    - AU15_r
+    - AU17_r
+    - AU20_r
+    - AU23_r
+    - AU25_r
+    - AU26_r
+    - AU45_r
+  au_binary:
+    - AU01_c
+    - AU02_c
+    - AU04_c
+    - AU05_c
+    - AU06_c
+    - AU07_c
+    - AU09_c
+    - AU10_c
+    - AU12_c
+    - AU14_c
+    - AU15_c
+    - AU17_c
+    - AU20_c
+    - AU23_c
+    - AU25_c
+    - AU26_c
+    - AU28_c
+    - AU45_c
+  pose:
+    - pose_Rx
+    - pose_Ry
+    - pose_Rz
+    - pose_Tx
+    - pose_Ty
+    - pose_Tz
+
+windowing:
+  window_size: 60
+  stride: 30
+
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 3
+  min_lr: 0.000001
+
+training:
+  model_type: "tcn"
+  num_classes: 2
+  batch_size: 256
+  num_workers: 12
+  learning_rate: 0.00005
+  num_epochs: 50
+  early_stopping_patience: 10
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1
+
+tcn:
+  num_channels: [32, 64, 64]
+  kernel_size: 7
+  dropout: 0.5
+  weight_decay: 0.001
