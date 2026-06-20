@@ -26,6 +26,16 @@ def get_class_names(binning: dict | None) -> list[str]:
 def _build_tags(config: dict | None) -> list[str]:
     base = ["fhad-daic", "depression-detection"]
     extra = (config or {}).get("tags", [])
+
+    binning = (config or {}).get("binning", {})
+    if binning.get("mode") == "phq_multiclass":
+        n_bins = len(binning.get("bins", []))
+        extra = extra + [
+            "multiclass",
+            f"{n_bins}-class",
+            "phq-bins",
+        ]
+
     return base + [t for t in extra if t not in base]
 
 
