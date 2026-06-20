@@ -11,7 +11,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 from fhad_daic.config import get_feature_cols
-from fhad_daic.data import AUWindowDataset, apply_scaler, fit_scaler, load_sessions, slide_windows
+from fhad_daic.data import AUWindowDataset, apply_scaler, fit_scaler, get_window_cache_path, load_sessions, slide_windows
 from fhad_daic.evaluate import load_checkpoint, run_evaluation
 from fhad_daic.models import TCN
 
@@ -29,22 +29,24 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    dev_pkl = Path("windowed_dev.pkl")
+    w_cfg = cfg["windowing"]
+    ws = w_cfg["window_size"]
+    st = w_cfg["stride"]
+    dev_pkl = get_window_cache_path("dev", ws, st)
 
     if dev_pkl.exists():
-        print("Loading cached windowed data...")
+        print(f"Loading cached windowed data: {dev_pkl}")
         with open(dev_pkl, "rb") as f:
             dev_X, dev_y = pickle.load(f)
     else:
-        print("Computing windowed data...")
+        print(f"Computing windowed data (window={ws}, stride={st})...")
         train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
         dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
 
         scaler = fit_scaler(train_sessions)
         dev_sessions = apply_scaler(dev_sessions, scaler)
 
-        w_cfg = cfg["windowing"]
-        dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+        dev_X, dev_y = slide_windows(dev_sessions, ws, st)
 
         with open(dev_pkl, "wb") as f:
             pickle.dump((dev_X, dev_y), f)

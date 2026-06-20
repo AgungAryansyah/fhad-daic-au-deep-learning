@@ -19,6 +19,7 @@ from fhad_daic.data import (
     collate_mil,
     compute_class_weights,
     fit_scaler,
+    get_window_cache_path,
     load_sessions,
     slide_windows,
 )
@@ -111,15 +112,14 @@ def train_config(cfg: dict) -> dict:
         print(f"\nBest dev macro F1: {result['best_dev_f1']:.4f}")
         return result
 
-    if is_mil:
-        train_pkl = Path("windowed_train_mil.pkl")
-        dev_pkl = Path("windowed_dev_mil.pkl")
-    else:
-        train_pkl = Path("windowed_train.pkl")
-        dev_pkl = Path("windowed_dev.pkl")
+    w_cfg = cfg["windowing"]
+    ws = w_cfg["window_size"]
+    st = w_cfg["stride"]
+    train_pkl = get_window_cache_path("train", ws, st, mil=is_mil)
+    dev_pkl = get_window_cache_path("dev", ws, st, mil=is_mil)
 
     if train_pkl.exists() and dev_pkl.exists():
-        print("Loading cached windowed data...")
+        print(f"Loading cached windowed data: {train_pkl}, {dev_pkl}")
         with open(train_pkl, "rb") as f:
             train_data = pickle.load(f)
         with open(dev_pkl, "rb") as f:
@@ -131,7 +131,7 @@ def train_config(cfg: dict) -> dict:
             train_X, train_y = train_data
             dev_X, dev_y = dev_data
     else:
-        print("Computing windowed data...")
+        print(f"Computing windowed data (window={ws}, stride={st})...")
         train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
         dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
 
@@ -139,19 +139,18 @@ def train_config(cfg: dict) -> dict:
         train_sessions = apply_scaler(train_sessions, scaler)
         dev_sessions = apply_scaler(dev_sessions, scaler)
 
-        w_cfg = cfg["windowing"]
         if is_mil:
             train_X, train_y, train_sids = slide_windows(
-                train_sessions, w_cfg["window_size"], w_cfg["stride"], return_sids=True
+                train_sessions, ws, st, return_sids=True
             )
             dev_X, dev_y, dev_sids = slide_windows(
-                dev_sessions, w_cfg["window_size"], w_cfg["stride"], return_sids=True
+                dev_sessions, ws, st, return_sids=True
             )
             train_data = (train_X, train_y, train_sids)
             dev_data = (dev_X, dev_y, dev_sids)
         else:
-            train_X, train_y = slide_windows(train_sessions, w_cfg["window_size"], w_cfg["stride"])
-            dev_X, dev_y = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+            train_X, train_y = slide_windows(train_sessions, ws, st)
+            dev_X, dev_y = slide_windows(dev_sessions, ws, st)
             train_data = (train_X, train_y)
             dev_data = (dev_X, dev_y)
 

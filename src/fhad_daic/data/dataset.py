@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import numpy as np
@@ -5,6 +6,14 @@ import pandas as pd
 import torch
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import Dataset
+
+CACHE_DIR = Path(os.getenv("WINDOW_CACHE_DIR", "cache/windowed"))
+
+
+def get_window_cache_path(split: str, window_size: int, stride: int, mil: bool = False) -> Path:
+    prefix = f"{split}_mil" if mil else split
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return CACHE_DIR / f"{prefix}_{window_size}_{stride}.pkl"
 
 
 def load_sessions(data_dir: Path, feature_cols: list[str]) -> list[tuple[np.ndarray, int]]:
