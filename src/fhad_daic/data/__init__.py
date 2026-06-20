@@ -1,6 +1,7 @@
 from .dataset import (
     AUWindowDataset,
     CACHE_DIR,
+    DEFAULT_BINS,
     MILWindowDataset,
     apply_scaler,
     collate_mil,
@@ -8,12 +9,15 @@ from .dataset import (
     fit_scaler,
     get_window_cache_path,
     load_sessions,
+    map_phq_to_bin,
+    resolve_label_mode,
     slide_windows,
 )
 
 __all__ = [
     "AUWindowDataset",
     "CACHE_DIR",
+    "DEFAULT_BINS",
     "MILWindowDataset",
     "apply_scaler",
     "collate_mil",
@@ -21,5 +25,7 @@ __all__ = [
     "fit_scaler",
     "get_window_cache_path",
     "load_sessions",
+    "map_phq_to_bin",
+    "resolve_label_mode",
     "slide_windows",
 ]

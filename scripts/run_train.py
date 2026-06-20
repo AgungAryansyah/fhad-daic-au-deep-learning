@@ -21,6 +21,7 @@ from fhad_daic.data import (
     fit_scaler,
     get_window_cache_path,
     load_sessions,
+    resolve_label_mode,
     slide_windows,
 )
 from fhad_daic.functional_features import extract_functional_features
@@ -42,6 +43,9 @@ def train_config(cfg: dict) -> dict:
     is_gru = cfg.get("training", {}).get("model_type") == "gru"
     is_lstm = cfg.get("training", {}).get("model_type") == "lstm"
 
+    binning = cfg.get("binning")
+    label_mode = resolve_label_mode(binning)
+
     t_cfg = cfg["training"]
 
     cv_mode = t_cfg.get("cv_mode")
@@ -57,8 +61,8 @@ def train_config(cfg: dict) -> dict:
         return result
 
     if is_functional:
-        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
-        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
+        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols, binning=binning)
+        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=binning)
 
         scaler = fit_scaler(train_sessions)
         train_sessions = apply_scaler(train_sessions, scaler)
@@ -115,8 +119,8 @@ def train_config(cfg: dict) -> dict:
     w_cfg = cfg["windowing"]
     ws = w_cfg["window_size"]
     st = w_cfg["stride"]
-    train_pkl = get_window_cache_path("train", ws, st, mil=is_mil)
-    dev_pkl = get_window_cache_path("dev", ws, st, mil=is_mil)
+    train_pkl = get_window_cache_path("train", ws, st, mil=is_mil, label_mode=label_mode)
+    dev_pkl = get_window_cache_path("dev", ws, st, mil=is_mil, label_mode=label_mode)
 
     if train_pkl.exists() and dev_pkl.exists():
         print(f"Loading cached windowed data: {train_pkl}, {dev_pkl}")
@@ -132,8 +136,8 @@ def train_config(cfg: dict) -> dict:
             dev_X, dev_y = dev_data
     else:
         print(f"Computing windowed data (window={ws}, stride={st})...")
-        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
-        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
+        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols, binning=binning)
+        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=binning)
 
         scaler = fit_scaler(train_sessions)
         train_sessions = apply_scaler(train_sessions, scaler)

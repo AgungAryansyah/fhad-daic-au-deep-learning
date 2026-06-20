@@ -9,15 +9,38 @@ from torch.utils.data import Dataset
 
 CACHE_DIR = Path(os.getenv("WINDOW_CACHE_DIR", "cache/windowed"))
 
+DEFAULT_BINS = [
+    {"label": 0, "name": "minimal",   "min": 0,  "max": 4},
+    {"label": 1, "name": "mild",      "min": 5,  "max": 9},
+    {"label": 2, "name": "moderate",  "min": 10, "max": 14},
+    {"label": 3, "name": "severe",    "min": 15, "max": 24},
+]
 
-def get_window_cache_path(split: str, window_size: int, stride: int, mil: bool = False) -> Path:
+
+def map_phq_to_bin(phq_score: float, bins: list[dict]) -> int:
+    for b in bins:
+        if b["min"] <= phq_score <= b["max"]:
+            return b["label"]
+    return len(bins) - 1
+
+
+def resolve_label_mode(binning: dict | None) -> str:
+    if binning and binning.get("mode") == "phq_multiclass":
+        return "multiclass"
+    return "binary"
+
+
+def get_window_cache_path(split: str, window_size: int, stride: int, mil: bool = False, label_mode: str = "binary") -> Path:
     prefix = f"{split}_mil" if mil else split
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return CACHE_DIR / f"{prefix}_{window_size}_{stride}.pkl"
+    return CACHE_DIR / f"{prefix}_{window_size}_{stride}_{label_mode}.pkl"
 
 
-def load_sessions(data_dir: Path, feature_cols: list[str]) -> list[tuple[np.ndarray, int]]:
+def load_sessions(data_dir: Path, feature_cols: list[str], binning: dict | None = None) -> list[tuple[np.ndarray, int]]:
     sessions = []
+    mode = resolve_label_mode(binning)
+    bins = (binning or {}).get("bins", DEFAULT_BINS)
+
     for csv_path in sorted(data_dir.glob("*_clean.csv")):
         df = pd.read_csv(csv_path)
         if df.empty:
@@ -26,7 +49,12 @@ def load_sessions(data_dir: Path, feature_cols: list[str]) -> list[tuple[np.ndar
         if missing:
             continue
         X = df[feature_cols].values.astype(np.float32)
-        y = int(df["phq_binary"].iloc[0])
+
+        if mode == "multiclass":
+            y = map_phq_to_bin(float(df["phq_score"].iloc[0]), bins)
+        else:
+            y = int(df["phq_binary"].iloc[0])
+
         sessions.append((X, y))
     return sessions
 

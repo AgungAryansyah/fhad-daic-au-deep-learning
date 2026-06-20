@@ -11,7 +11,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 from fhad_daic.config import get_feature_cols
-from fhad_daic.data import AUWindowDataset, apply_scaler, fit_scaler, get_window_cache_path, load_sessions, slide_windows
+from fhad_daic.data import AUWindowDataset, apply_scaler, fit_scaler, get_window_cache_path, load_sessions, resolve_label_mode, slide_windows
 from fhad_daic.evaluate import load_checkpoint, run_evaluation
 from fhad_daic.models import TCN
 
@@ -29,10 +29,13 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    binning = cfg.get("binning")
+    label_mode = resolve_label_mode(binning)
+
     w_cfg = cfg["windowing"]
     ws = w_cfg["window_size"]
     st = w_cfg["stride"]
-    dev_pkl = get_window_cache_path("dev", ws, st)
+    dev_pkl = get_window_cache_path("dev", ws, st, label_mode=label_mode)
 
     if dev_pkl.exists():
         print(f"Loading cached windowed data: {dev_pkl}")
@@ -40,8 +43,8 @@ def main() -> None:
             dev_X, dev_y = pickle.load(f)
     else:
         print(f"Computing windowed data (window={ws}, stride={st})...")
-        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols)
-        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols)
+        train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols, binning=binning)
+        dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=binning)
 
         scaler = fit_scaler(train_sessions)
         dev_sessions = apply_scaler(dev_sessions, scaler)
