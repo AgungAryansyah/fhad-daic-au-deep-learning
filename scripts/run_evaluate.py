@@ -59,6 +59,8 @@ def main() -> None:
                         help="Fallback YAML config if checkpoint lacks config")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Path to .pth checkpoint (default: auto-detect latest)")
+    parser.add_argument("--experiment", type=str, default=None,
+                        help="Experiment name for checkpoint lookup (default: use global latest)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -68,7 +70,7 @@ def main() -> None:
         checkpoint_path = Path(args.checkpoint)
     else:
         checkpoint_dir = Path("checkpoints")
-        checkpoint_path = find_latest_checkpoint(checkpoint_dir)
+        checkpoint_path = find_latest_checkpoint(checkpoint_dir, experiment_name=args.experiment)
     print(f"Checkpoint: {checkpoint_path}")
 
     raw = torch.load(checkpoint_path, map_location=device, weights_only=False)

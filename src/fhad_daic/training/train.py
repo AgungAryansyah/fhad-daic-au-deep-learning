@@ -215,14 +215,23 @@ def run_training(
 
     class_names = get_class_names((config or {}).get("binning"))
 
+    experiment_name = (config or {}).get("experiment_name", "experiment")
+    experiment_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in experiment_name)
+
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = checkpoint_root / run_timestamp
+    config_dir = checkpoint_root / experiment_name
+    run_dir = config_dir / run_timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    latest_link = checkpoint_root / "latest"
-    if latest_link.is_symlink() or latest_link.exists():
-        latest_link.unlink()
-    latest_link.symlink_to(run_timestamp, target_is_directory=True)
+    config_latest = config_dir / "latest"
+    if config_latest.is_symlink() or config_latest.exists():
+        config_latest.unlink()
+    config_latest.symlink_to(run_timestamp, target_is_directory=True)
+
+    global_latest = checkpoint_root / "latest"
+    if global_latest.is_symlink() or global_latest.exists():
+        global_latest.unlink()
+    global_latest.symlink_to(Path(experiment_name) / run_timestamp, target_is_directory=True)
 
     output_cfg = (config or {}).get("output", {})
     save_frequency = output_cfg.get("save_frequency", 0)
