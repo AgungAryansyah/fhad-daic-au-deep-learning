@@ -27,9 +27,18 @@ def load_sessions_with_ids(
             if df.empty:
                 continue
             missing = [c for c in feature_cols if c not in df.columns]
-            if missing:
-                continue
+            for c in missing:
+                df[c] = 0.5
             X = df[feature_cols].values.astype(np.float32)
+            if "confidence_mean" in feature_cols:
+                ci = feature_cols.index("confidence")
+                conf = pd.Series(X[:, ci])
+                w = min(30, len(X))
+                X[:, feature_cols.index("confidence_mean")] = conf.rolling(w, center=True, min_periods=1).mean().values
+                s = conf.rolling(w, center=True, min_periods=1).std(ddof=0)
+                X[:, feature_cols.index("confidence_std")] = s.fillna(0.0).values
+                m = conf.rolling(w, center=True, min_periods=1).min()
+                X[:, feature_cols.index("confidence_min")] = m.bfill().ffill().values
 
             if mode == "multiclass" and bins:
                 y = map_phq_to_bin(float(df["phq_score"].iloc[0]), bins)

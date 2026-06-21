@@ -49,6 +49,10 @@ features:
     - AU25_r
     - AU26_r
     - AU45_r
+  include_confidence: true
+  confidence_aggregates: true
+  confidence:
+    - confidence
 
 scheduler:
   type: "plateau"

@@ -56,6 +56,10 @@ features:
     - pose_Tx
     - pose_Ty
     - pose_Tz
+  include_confidence: true
+  confidence_aggregates: true
+  confidence:
+    - confidence
 
 scheduler:
   type: "plateau"
