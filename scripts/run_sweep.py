@@ -20,7 +20,13 @@ def inject_tags(config: dict, extra_tags: list[str]) -> dict:
     return config
 
 
-def run_sweep(config_paths: list[str], extra_tags: list[str]) -> None:
+def inject_sweep_name(config: dict, sweep_name: str) -> dict:
+    output = config.setdefault("output", {})
+    output["sweep_name"] = sweep_name
+    return config
+
+
+def run_sweep(config_paths: list[str], extra_tags: list[str], sweep_name: str | None) -> None:
     from run_train import train_config
 
     expanded = []
@@ -37,6 +43,8 @@ def run_sweep(config_paths: list[str], extra_tags: list[str]) -> None:
     print(f"\nRunning sweep of {n} config(s)")
     if extra_tags:
         print(f"Extra tags: {extra_tags}")
+    if sweep_name:
+        print(f"Sweep name: {sweep_name}")
 
     for idx, config_path in enumerate(expanded, start=1):
         print(f"\n{'='*60}")
@@ -45,6 +53,8 @@ def run_sweep(config_paths: list[str], extra_tags: list[str]) -> None:
 
         config = load_config(config_path)
         config = inject_tags(config, extra_tags)
+        if sweep_name:
+            config = inject_sweep_name(config, sweep_name)
 
         result = train_config(config)
         results.append((config_path, result))
@@ -68,8 +78,12 @@ def main() -> None:
         "--tags", nargs="*", default=[],
         help="Extra W&B tags appended to every run",
     )
+    parser.add_argument(
+        "--sweep-name", type=str, default=None,
+        help="Sweep name for grouping checkpoints (injected as output.sweep_name)",
+    )
     args = parser.parse_args()
-    run_sweep(args.configs, args.tags)
+    run_sweep(args.configs, args.tags, args.sweep_name)
 
 
 if __name__ == "__main__":

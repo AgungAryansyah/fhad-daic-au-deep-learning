@@ -12,19 +12,35 @@ def load_checkpoint(model: nn.Module, checkpoint_path: Path, device: torch.devic
     return checkpoint.get("epoch", 0)
 
 
-def find_latest_checkpoint(checkpoint_dir: Path, experiment_name: str | None = None) -> Path:
+def find_latest_checkpoint(checkpoint_dir: Path, sweep_name: str | None = None, experiment_name: str | None = None) -> Path:
+    candidates = []
+
+    if sweep_name and experiment_name:
+        p = checkpoint_dir / sweep_name / experiment_name / "latest"
+        if p.is_symlink():
+            candidates.append(p.resolve())
+
     if experiment_name:
-        config_latest = checkpoint_dir / experiment_name / "latest"
-        if config_latest.is_symlink():
-            best = (config_latest.resolve() / "best_model.pth")
+        p = checkpoint_dir / experiment_name / "latest"
+        if p.is_symlink():
+            candidates.append(p.resolve())
+
+    if sweep_name:
+        p = checkpoint_dir / sweep_name / "latest"
+        if p.is_symlink():
+            candidates.append(p.resolve())
+
+    p = checkpoint_dir / "latest"
+    if p.is_symlink():
+        candidates.append(p.resolve())
+
+    for c in candidates:
+        if c.is_dir():
+            best = c / "best_model.pth"
             if best.exists():
                 return best
-
-    global_latest = checkpoint_dir / "latest"
-    if global_latest.is_symlink():
-        best = (global_latest.resolve() / "best_model.pth")
-        if best.exists():
-            return best
+        elif c.exists() and c.suffix == ".pth":
+            return c
 
     return checkpoint_dir / "best.pt"
 

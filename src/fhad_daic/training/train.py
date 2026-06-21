@@ -218,20 +218,38 @@ def run_training(
     experiment_name = (config or {}).get("experiment_name", "experiment")
     experiment_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in experiment_name)
 
+    sweep_name = (config or {}).get("output", {}).get("sweep_name", "")
+    sweep_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in sweep_name) if sweep_name else ""
+
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    config_dir = checkpoint_root / experiment_name
+    if sweep_name:
+        sweep_dir = checkpoint_root / sweep_name
+        config_dir = sweep_dir / experiment_name
+    else:
+        sweep_dir = None
+        config_dir = checkpoint_root / experiment_name
     run_dir = config_dir / run_timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    # Per-config latest symlink
     config_latest = config_dir / "latest"
     if config_latest.is_symlink() or config_latest.exists():
         config_latest.unlink()
     config_latest.symlink_to(run_timestamp, target_is_directory=True)
 
+    # Per-sweep latest (if inside a sweep)
+    if sweep_dir:
+        sweep_latest = sweep_dir / "latest"
+        if sweep_latest.is_symlink() or sweep_latest.exists():
+            sweep_latest.unlink()
+        sweep_latest.symlink_to(Path(experiment_name) / run_timestamp, target_is_directory=True)
+
+    # Global latest
+    global_rel = Path(sweep_name) / experiment_name / run_timestamp if sweep_name else Path(experiment_name) / run_timestamp
     global_latest = checkpoint_root / "latest"
     if global_latest.is_symlink() or global_latest.exists():
         global_latest.unlink()
-    global_latest.symlink_to(Path(experiment_name) / run_timestamp, target_is_directory=True)
+    global_latest.symlink_to(global_rel, target_is_directory=True)
 
     output_cfg = (config or {}).get("output", {})
     save_frequency = output_cfg.get("save_frequency", 0)
