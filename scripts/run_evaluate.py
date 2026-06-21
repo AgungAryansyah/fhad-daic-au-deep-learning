@@ -12,24 +12,70 @@ sys.path.insert(0, str(project_root / "src"))
 
 from fhad_daic.config import get_feature_cols
 from fhad_daic.data import AUWindowDataset, apply_scaler, fit_scaler, get_window_cache_path, load_sessions, resolve_label_mode, resolve_modality, slide_windows
-from fhad_daic.evaluate import load_checkpoint, run_evaluation
-from fhad_daic.models import TCN
+from fhad_daic.evaluate import find_latest_checkpoint, load_checkpoint, run_evaluation
+from fhad_daic.models import GRUModel, LSTMModel, MILTCN, TCN
 from fhad_daic.training import get_class_names
 
 
+def _build_model_from_config(cfg: dict, num_inputs: int, device: torch.device):
+    t_cfg = cfg["training"]
+    model_type = t_cfg.get("model_type", "tcn")
+    n_classes = t_cfg["num_classes"]
+
+    if model_type == "mil":
+        tcn_cfg = cfg["tcn"]
+        attn_dim = cfg.get("mil", {}).get("attn_dim", 64)
+        return MILTCN(
+            num_inputs=num_inputs, num_channels=tcn_cfg["num_channels"],
+            kernel_size=tcn_cfg["kernel_size"], dropout=tcn_cfg["dropout"],
+            num_classes=n_classes, attn_dim=attn_dim,
+        ).to(device)
+    elif model_type == "gru":
+        rnn_cfg = cfg["gru"]
+        return GRUModel(
+            num_inputs=num_inputs, hidden_size=rnn_cfg["hidden_size"],
+            num_layers=rnn_cfg["num_layers"], dropout=rnn_cfg["dropout"],
+            num_classes=n_classes, bidirectional=rnn_cfg.get("bidirectional", True),
+        ).to(device)
+    elif model_type == "lstm":
+        rnn_cfg = cfg["lstm"]
+        return LSTMModel(
+            num_inputs=num_inputs, hidden_size=rnn_cfg["hidden_size"],
+            num_layers=rnn_cfg["num_layers"], dropout=rnn_cfg["dropout"],
+            num_classes=n_classes, bidirectional=rnn_cfg.get("bidirectional", True),
+        ).to(device)
+    else:
+        tcn_cfg = cfg["tcn"]
+        return TCN(
+            num_inputs=num_inputs, num_channels=tcn_cfg["num_channels"],
+            kernel_size=tcn_cfg["kernel_size"], dropout=tcn_cfg["dropout"],
+            num_classes=n_classes,
+        ).to(device)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate TCN for depression detection")
-    parser.add_argument("--config", type=str, default="src/fhad_daic/config/visual/baseline.yaml")
+    parser = argparse.ArgumentParser(description="Evaluate model checkpoint")
+    parser.add_argument("--config", type=str, default="src/fhad_daic/config/visual/baseline.yaml",
+                        help="Fallback YAML config if checkpoint lacks config")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Path to .pth checkpoint (default: auto-detect latest)")
     args = parser.parse_args()
 
-    with open(args.config) as f:
-        cfg = yaml.safe_load(f)
-    print(f"Loading config from: {args.config}")
-
-    feature_cols = get_feature_cols(cfg)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    if args.checkpoint:
+        checkpoint_path = Path(args.checkpoint)
+    else:
+        checkpoint_dir = Path("checkpoints")
+        checkpoint_path = find_latest_checkpoint(checkpoint_dir)
+    print(f"Checkpoint: {checkpoint_path}")
+
+    raw = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    cfg = raw.get("config") or yaml.safe_load(open(args.config))
+    print(f"Loading config: {cfg.get('experiment_name', args.config)}")
+
+    feature_cols = get_feature_cols(cfg)
     binning = cfg.get("binning")
     label_mode = resolve_label_mode(binning)
     modality = resolve_modality(cfg.get("features"))
@@ -47,12 +93,9 @@ def main() -> None:
         print(f"Computing windowed data (window={ws}, stride={st})...")
         train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols, binning=binning, modality=modality)
         dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=binning, modality=modality)
-
         scaler = fit_scaler(train_sessions)
         dev_sessions = apply_scaler(dev_sessions, scaler)
-
         dev_X, dev_y = slide_windows(dev_sessions, ws, st)
-
         with open(dev_pkl, "wb") as f:
             pickle.dump((dev_X, dev_y), f)
         print(f"Saved windowed data to {dev_pkl}")
@@ -61,17 +104,7 @@ def main() -> None:
     dev_loader = DataLoader(AUWindowDataset(dev_X, dev_y), batch_size=t_cfg["batch_size"])
 
     class_names = get_class_names(cfg.get("binning"))
-
-    tcn_cfg = cfg["tcn"]
-    model = TCN(
-        num_inputs=len(feature_cols),
-        num_channels=tcn_cfg["num_channels"],
-        kernel_size=tcn_cfg["kernel_size"],
-        dropout=tcn_cfg["dropout"],
-        num_classes=t_cfg["num_classes"],
-    ).to(device)
-
-    checkpoint_path = Path(cfg["data"]["checkpoints_dir"]) / "best.pt"
+    model = _build_model_from_config(cfg, len(feature_cols), device)
     epoch = load_checkpoint(model, checkpoint_path, device)
     print(f"Loaded checkpoint from epoch {epoch}")
 

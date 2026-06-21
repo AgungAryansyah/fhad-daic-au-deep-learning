@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,8 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+from .utils import save_checkpoint
 
 
 CLASS_NAMES = ["not depressed", "depressed"]
@@ -203,7 +206,7 @@ def run_training(
     optimizer: torch.optim.Optimizer,
     num_epochs: int,
     patience: int,
-    checkpoint_path: Path,
+    checkpoint_root: Path,
     device: torch.device,
     config: dict | None = None,
     is_mil: bool = False,
@@ -211,6 +214,18 @@ def run_training(
     load_dotenv()
 
     class_names = get_class_names((config or {}).get("binning"))
+
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = checkpoint_root / run_timestamp
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    latest_link = checkpoint_root / "latest"
+    if latest_link.is_symlink() or latest_link.exists():
+        latest_link.unlink()
+    latest_link.symlink_to(run_timestamp, target_is_directory=True)
+
+    output_cfg = (config or {}).get("output", {})
+    save_frequency = output_cfg.get("save_frequency", 0)
 
     wandb.init(
         project=os.getenv("WANDB_PROJECT", "fhad-tcn-depression"),
@@ -280,8 +295,12 @@ def run_training(
         if dev_f1 > best_f1:
             best_f1 = dev_f1
             epochs_without_improvement = 0
-            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save({"epoch": epoch, "model_state": model.state_dict(), "dev_f1": dev_f1}, checkpoint_path)
+            save_checkpoint(
+                run_dir, "best_model.pth",
+                model, optimizer, scheduler,
+                epoch=epoch, train_loss=train_loss, dev_loss=dev_loss,
+                dev_f1=dev_f1, best_dev_f1=best_f1, config=config,
+            )
             wandb.summary["best_dev_f1"] = best_f1
             wandb.summary["best_epoch"] = epoch
         else:
@@ -289,6 +308,14 @@ def run_training(
             if epochs_without_improvement >= patience:
                 print(f"Early stopping at epoch {epoch}.")
                 break
+
+        if save_frequency > 0 and epoch % save_frequency == 0:
+            save_checkpoint(
+                run_dir, f"checkpoint_epoch_{epoch:04d}.pth",
+                model, optimizer, scheduler,
+                epoch=epoch, train_loss=train_loss, dev_loss=dev_loss,
+                dev_f1=dev_f1, best_dev_f1=best_f1, config=config,
+            )
 
     wandb.finish()
     return {"best_dev_f1": best_f1, "history": history}

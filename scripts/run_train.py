@@ -110,7 +110,7 @@ def train_config(cfg: dict) -> dict:
             optimizer=optimizer,
             num_epochs=t_cfg["num_epochs"],
             patience=t_cfg["early_stopping_patience"],
-            checkpoint_path=Path(cfg["data"]["checkpoints_dir"]) / "best.pt",
+            checkpoint_root=Path(cfg["data"]["checkpoints_dir"]),
             device=device,
             config=cfg,
         )

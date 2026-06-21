@@ -7,9 +7,18 @@ from torch.utils.data import DataLoader
 
 
 def load_checkpoint(model: nn.Module, checkpoint_path: Path, device: torch.device) -> int:
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint["model_state"])
-    return checkpoint["epoch"]
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    model.load_state_dict(checkpoint.get("model_state_dict", checkpoint.get("model_state", {})))
+    return checkpoint.get("epoch", 0)
+
+
+def find_latest_checkpoint(checkpoint_dir: Path) -> Path:
+    latest_dir = checkpoint_dir / "latest"
+    if latest_dir.is_symlink():
+        best = latest_dir / "best_model.pth"
+        if best.exists():
+            return best.resolve()
+    return checkpoint_dir / "best.pt"
 
 
 def run_evaluation(
