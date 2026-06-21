@@ -14,19 +14,21 @@ from fhad_daic.config import get_feature_cols
 from fhad_daic.cross_validation import run_loso_cv_mlp
 from fhad_daic.data import (
     AUWindowDataset,
+    FusionDataset,
     MILWindowDataset,
     apply_scaler,
     collate_mil,
     compute_class_weights,
     fit_scaler,
     get_window_cache_path,
+    load_fusion_sessions,
     load_sessions,
     resolve_label_mode,
     resolve_modality,
     slide_windows,
 )
 from fhad_daic.functional_features import extract_functional_features
-from fhad_daic.models import GRUModel, LSTMModel, MLP, MILTCN, TCN
+from fhad_daic.models import FusionModel, GRUModel, LSTMModel, MLP, MILTCN, TCN
 from fhad_daic.training import run_training
 
 
@@ -41,6 +43,7 @@ def train_config(cfg: dict) -> dict:
 
     is_mil = cfg.get("training", {}).get("model_type") == "mil"
     is_functional = cfg.get("training", {}).get("model_type") == "functional"
+    is_fusion = cfg.get("training", {}).get("model_type") == "fusion"
     is_gru = cfg.get("training", {}).get("model_type") == "gru"
     is_lstm = cfg.get("training", {}).get("model_type") == "lstm"
 
@@ -60,6 +63,84 @@ def train_config(cfg: dict) -> dict:
             device=device,
         )
         print(f"\nLOSO CV macro F1: {result['macro_f1']:.4f}")
+        return result
+
+    if is_fusion:
+        vis_cfg = cfg["features"]["visual"]
+        vis_cols = vis_cfg.get("au_regression", []) + vis_cfg.get("au_binary", []) + vis_cfg.get("pose", [])
+        aud_cols = cfg["features"]["audio"]["egemaps"]
+
+        train_dir = Path(cfg["data"]["train_dir"])
+        dev_dir = Path(cfg["data"]["dev_dir"])
+
+        print("Loading paired visual+audio sessions...")
+        train_vis, train_aud, train_y, train_aux_v, train_aux_a = load_fusion_sessions(train_dir, vis_cols, aud_cols, binning=binning)
+        dev_vis, dev_aud, dev_y, dev_aux_v, dev_aux_a = load_fusion_sessions(dev_dir, vis_cols, aud_cols, binning=binning)
+        print(f"Train: {len(train_vis)} sessions  Dev: {len(dev_vis)} sessions")
+
+        train_vis_sessions = [(X, int(y)) for X, y in zip(train_vis, train_y)]
+        dev_vis_sessions = [(X, int(y)) for X, y in zip(dev_vis, dev_y)]
+        train_aud_sessions = [(X, int(y)) for X, y in zip(train_aud, train_y)]
+        dev_aud_sessions = [(X, int(y)) for X, y in zip(dev_aud, dev_y)]
+
+        vis_scaler = fit_scaler(train_vis_sessions)
+        aud_scaler = fit_scaler(train_aud_sessions)
+
+        train_vis_sessions = apply_scaler(train_vis_sessions, vis_scaler)
+        dev_vis_sessions = apply_scaler(dev_vis_sessions, vis_scaler)
+        train_aud_sessions = apply_scaler(train_aud_sessions, aud_scaler)
+        dev_aud_sessions = apply_scaler(dev_aud_sessions, aud_scaler)
+
+        print("Extracting functional features...")
+        train_Fv, _ = extract_functional_features(train_vis_sessions)
+        dev_Fv, _ = extract_functional_features(dev_vis_sessions)
+        train_Fa, _ = extract_functional_features(train_aud_sessions)
+        dev_Fa, _ = extract_functional_features(dev_aud_sessions)
+        print(f"Visual: {train_Fv.shape[1]} dim  Audio: {train_Fa.shape[1]} dim")
+
+        train_loader = DataLoader(
+            FusionDataset(train_Fv, train_Fa, train_y, train_aux_v, train_aux_a),
+            batch_size=len(train_Fv),
+            shuffle=True,
+        )
+        dev_loader = DataLoader(
+            FusionDataset(dev_Fv, dev_Fa, dev_y, dev_aux_v, dev_aux_a),
+            batch_size=len(dev_Fv),
+        )
+
+        fusion_cfg = cfg.get("fusion", {})
+        model = FusionModel(
+            vis_dim=train_Fv.shape[1],
+            aud_dim=train_Fa.shape[1],
+            hidden_dims=fusion_cfg.get("hidden_dims", [64, 32]),
+            dropout=fusion_cfg.get("dropout", 0.7),
+            num_classes=t_cfg["num_classes"],
+        ).to(device)
+
+        class_weights = compute_class_weights(train_y, t_cfg["num_classes"]).to(device)
+        label_smoothing = t_cfg.get("label_smoothing", 0.0)
+        criterion = torch.nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=t_cfg["learning_rate"],
+            weight_decay=fusion_cfg.get("weight_decay", 0.01),
+        )
+
+        result = run_training(
+            model=model,
+            train_loader=train_loader,
+            dev_loader=dev_loader,
+            criterion=criterion,
+            optimizer=optimizer,
+            num_epochs=t_cfg["num_epochs"],
+            patience=t_cfg["early_stopping_patience"],
+            checkpoint_root=Path(cfg["data"]["checkpoints_dir"]),
+            device=device,
+            config=cfg,
+            is_fusion=True,
+        )
+
+        print(f"\nBest dev macro F1: {result['best_dev_f1']:.4f}")
         return result
 
     if is_functional:
