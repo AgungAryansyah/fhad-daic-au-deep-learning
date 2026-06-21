@@ -1,10 +1,9 @@
-experiment_name: "fusion-functional-multiclass"
+experiment_name: "fusion-functional"
 tags:
   - fusion
   - reliability-weighted
   - functional-features
   - multimodal
-  - multiclass
   - hidden-64-32
   - mlp-dropout-0.7
   - wd-1e-2
@@ -15,6 +14,8 @@ tags:
   - plateau
   - grad-clip-1.0
   - no-window
+  - modality-comparison
+  - fusion
 
 data:
   cleaned_data_root: "data"

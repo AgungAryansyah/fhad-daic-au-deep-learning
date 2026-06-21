@@ -11,6 +11,8 @@ tags:
   - adam
   - plateau
   - grad-clip-1.0
+  - modality-comparison
+  - visual-only
 
 data:
   cleaned_data_root: "data"
