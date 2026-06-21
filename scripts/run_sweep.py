@@ -23,14 +23,22 @@ def inject_tags(config: dict, extra_tags: list[str]) -> dict:
 def run_sweep(config_paths: list[str], extra_tags: list[str]) -> None:
     from run_train import train_config
 
+    expanded = []
+    for pattern in config_paths:
+        matches = sorted(Path().glob(pattern))
+        if matches:
+            expanded.extend(str(m) for m in matches)
+        else:
+            expanded.append(pattern)
+
     results = []
-    n = len(config_paths)
+    n = len(expanded)
 
     print(f"\nRunning sweep of {n} config(s)")
     if extra_tags:
         print(f"Extra tags: {extra_tags}")
 
-    for idx, config_path in enumerate(config_paths, start=1):
+    for idx, config_path in enumerate(expanded, start=1):
         print(f"\n{'='*60}")
         print(f"[{idx}/{n}] {config_path}")
         print(f"{'='*60}")

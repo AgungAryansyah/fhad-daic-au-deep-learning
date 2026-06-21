@@ -1,0 +1,55 @@
+experiment_name: "mlp-6f-small"
+tags:
+  - mlp
+  - functional-features
+  - feature-ablation
+  - pose-only
+  - small-model
+  - hidden-32-16
+  - mlp-dropout-0.8
+  - wd-2e-2
+  - lr-1e-3
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
+  - 6f
+
+data:
+  cleaned_data_root: "data"
+  train_dir: "data/train"
+  dev_dir: "data/dev"
+  checkpoints_dir: "checkpoints"
+
+features:
+  pose:
+    - pose_Rx
+    - pose_Ry
+    - pose_Rz
+    - pose_Tx
+    - pose_Ty
+    - pose_Tz
+
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 5
+  min_lr: 0.000001
+
+mlp:
+  hidden_dims: [32, 16]
+  dropout: 0.8
+  weight_decay: 0.02
+
+training:
+  model_type: "functional"
+  num_classes: 2
+  batch_size: 0
+  num_workers: 0
+  learning_rate: 0.001
+  num_epochs: 200
+  early_stopping_patience: 25
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1

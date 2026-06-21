@@ -1,0 +1,73 @@
+experiment_name: "mlp-23f-tiny"
+tags:
+  - mlp
+  - functional-features
+  - feature-ablation
+  - no-binary
+  - tiny-model
+  - hidden-16-8
+  - mlp-dropout-0.85
+  - wd-3e-2
+  - lr-1e-3
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
+  - 23f
+
+data:
+  cleaned_data_root: "data"
+  train_dir: "data/train"
+  dev_dir: "data/dev"
+  checkpoints_dir: "checkpoints"
+
+features:
+  au_regression:
+    - AU01_r
+    - AU02_r
+    - AU04_r
+    - AU05_r
+    - AU06_r
+    - AU07_r
+    - AU09_r
+    - AU10_r
+    - AU12_r
+    - AU14_r
+    - AU15_r
+    - AU17_r
+    - AU20_r
+    - AU23_r
+    - AU25_r
+    - AU26_r
+    - AU45_r
+  pose:
+    - pose_Rx
+    - pose_Ry
+    - pose_Rz
+    - pose_Tx
+    - pose_Ty
+    - pose_Tz
+
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 5
+  min_lr: 0.000001
+
+mlp:
+  hidden_dims: [16, 8]
+  dropout: 0.85
+  weight_decay: 0.03
+
+training:
+  model_type: "functional"
+  num_classes: 2
+  batch_size: 0
+  num_workers: 0
+  learning_rate: 0.001
+  num_epochs: 200
+  early_stopping_patience: 25
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1
