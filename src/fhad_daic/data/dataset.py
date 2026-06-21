@@ -147,3 +147,109 @@ def compute_class_weights(labels: np.ndarray, num_classes: int) -> torch.Tensor:
     counts = np.clip(counts, a_min=1, a_max=None)
     weights = counts.sum() / (num_classes * counts)
     return torch.from_numpy(weights)
+
+
+def load_fusion_sessions(
+    data_dir: Path,
+    vis_feature_cols: list[str],
+    aud_feature_cols: list[str],
+    binning: dict | None = None,
+) -> tuple[list[np.ndarray], list[np.ndarray], np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray]]:
+    mode = resolve_label_mode(binning)
+    bins = (binning or {}).get("bins", DEFAULT_BINS)
+
+    vis_files = sorted([f for f in data_dir.glob("*_clean.csv") if "egemaps" not in f.name])
+    aud_files = sorted(data_dir.glob("*_egemaps_clean.csv"))
+
+    aud_by_sid = {}
+    for ap in aud_files:
+        sid = int(ap.stem.replace("_egemaps_clean", ""))
+        aud_by_sid[sid] = ap
+
+    vis_sessions = []
+    aud_sessions = []
+    labels = []
+
+    aux_confidence = []
+    aux_au_dyn = []
+    aux_pose_var = []
+    aux_hnr = []
+
+    for vp in vis_files:
+        sid = int(vp.stem.replace("_clean", ""))
+        if sid not in aud_by_sid:
+            continue
+        ap = aud_by_sid[sid]
+
+        vdf = pd.read_csv(vp)
+        missing_v = [c for c in vis_feature_cols if c not in vdf.columns]
+        for c in missing_v:
+            vdf[c] = 0.5
+        X_v = vdf[vis_feature_cols].values.astype(np.float32)
+        cconf = vdf["confidence"].values.astype(np.float32) if "confidence" in vdf.columns else np.full(len(vdf), 0.5, dtype=np.float32)
+
+        adf = pd.read_csv(ap)
+        missing_a = [c for c in aud_feature_cols if c not in adf.columns]
+        for c in missing_a:
+            adf[c] = 0.0
+        X_a = adf[aud_feature_cols].values.astype(np.float32)
+        X_a = np.nan_to_num(X_a, nan=0.0)
+        hnr_col = adf["HNRdBACF_sma3nz"].values.astype(np.float32) if "HNRdBACF_sma3nz" in adf.columns else np.zeros(len(adf), dtype=np.float32)
+        hnr_col = np.nan_to_num(hnr_col, nan=0.0)
+
+        if mode == "multiclass":
+            y = map_phq_to_bin(float(vdf["phq_score"].iloc[0]), bins)
+        else:
+            y = int(vdf["phq_binary"].iloc[0])
+
+        vis_sessions.append(X_v)
+        aud_sessions.append(X_a)
+        labels.append(y)
+
+        au_dyn = np.array([np.std(X_v[:, i]) for i in range(len(vis_feature_cols))])
+        pose_cols_v = [i for i, c in enumerate(vis_feature_cols) if c.startswith("pose_")]
+        pvar = np.mean([np.std(X_v[:, i]) for i in pose_cols_v]) if pose_cols_v else 0.0
+
+        aux_confidence.append(float(np.mean(cconf)))
+        aux_au_dyn.append(float(np.mean(au_dyn)))
+        aux_pose_var.append(float(pvar))
+        aux_hnr.append(float(np.mean(hnr_col)))
+
+    aux_v = {
+        "confidence_mean": np.array(aux_confidence, dtype=np.float32),
+        "au_dyn_mean": np.array(aux_au_dyn, dtype=np.float32),
+        "pose_var_mean": np.array(aux_pose_var, dtype=np.float32),
+    }
+    aux_a = {
+        "hnr_mean": np.array(aux_hnr, dtype=np.float32),
+    }
+
+    return vis_sessions, aud_sessions, np.array(labels, dtype=np.int64), aux_v, aux_a
+
+
+class FusionDataset(Dataset):
+    def __init__(
+        self,
+        F_v: np.ndarray,
+        F_a: np.ndarray,
+        y: np.ndarray,
+        aux_v: dict[str, np.ndarray],
+        aux_a: dict[str, np.ndarray],
+    ):
+        self.F_v = torch.from_numpy(F_v)
+        self.F_a = torch.from_numpy(F_a)
+        self.y = torch.from_numpy(y)
+        self.aux_v = {k: torch.from_numpy(v) for k, v in aux_v.items()}
+        self.aux_a = {k: torch.from_numpy(v) for k, v in aux_a.items()}
+
+    def __len__(self) -> int:
+        return len(self.y)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        return (
+            self.F_v[idx],
+            self.F_a[idx],
+            self.y[idx],
+            {k: v[idx] for k, v in self.aux_v.items()},
+            {k: v[idx] for k, v in self.aux_a.items()},
+        )
