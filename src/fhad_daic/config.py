@@ -3,7 +3,8 @@ def get_modality(cfg: dict) -> str:
 
 
 def get_feature_cols(cfg: dict) -> list[str]:
-    f = cfg["features"]
+    f = cfg.get("features", {})
     if get_modality(cfg) == "egemaps":
-        return f["egemaps"]
-    return f["au_regression"] + f["au_binary"] + f["pose"]
+        return f.get("egemaps", [])
+    cols = f.get("au_regression", []) + f.get("au_binary", []) + f.get("pose", [])
+    return cols

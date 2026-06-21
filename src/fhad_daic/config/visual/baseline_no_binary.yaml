@@ -1,0 +1,81 @@
+experiment_name: "tcn-baseline-no-binary"
+tags:
+  - tcn
+  - baseline
+  - channels-32-64-64
+  - kernel-7
+  - dropout-0.5
+  - wd-1e-3
+  - lr-5e-5
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
+  - w150
+  - s75
+  - no-binary
+  - reduced-features
+  - 23f
+
+data:
+  cleaned_data_root: "data"
+  train_dir: "data/train"
+  dev_dir: "data/dev"
+  checkpoints_dir: "checkpoints"
+
+# 23 features: 17 AU regression + 6 pose (AU binary dropped — redundant with regression)
+features:
+  au_regression:
+    - AU01_r
+    - AU02_r
+    - AU04_r
+    - AU05_r
+    - AU06_r
+    - AU07_r
+    - AU09_r
+    - AU10_r
+    - AU12_r
+    - AU14_r
+    - AU15_r
+    - AU17_r
+    - AU20_r
+    - AU23_r
+    - AU25_r
+    - AU26_r
+    - AU45_r
+  pose:
+    - pose_Rx
+    - pose_Ry
+    - pose_Rz
+    - pose_Tx
+    - pose_Ty
+    - pose_Tz
+
+windowing:
+  window_size: 150
+  stride: 75
+
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 3
+  min_lr: 0.000001
+
+training:
+  model_type: "tcn"
+  num_classes: 2
+  batch_size: 256
+  num_workers: 12
+  learning_rate: 0.00005
+  num_epochs: 50
+  early_stopping_patience: 10
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1
+
+tcn:
+  num_channels: [32, 64, 64]
+  kernel_size: 7
+  dropout: 0.5
+  weight_decay: 0.001
