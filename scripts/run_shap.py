@@ -396,7 +396,88 @@ def _run_timeshap(train_cfg, shap_cfg, device, checkpoint_path):
                 model, segment, aud_baseline, vis_baseline, aux_bl,
                 "audio", aud_cols, f"sid_{sid}_audio", T_aud, output_dir, device)
 
+    _plot_fusion_weights(model, train_vis, train_aud, train_y, aux_v, aux_a,
+                         vis_scaler, aud_scaler, output_dir, device)
+
     print(f"Saved to {output_dir}")
+
+
+def _plot_fusion_weights(model, vis_sessions, aud_sessions, labels, aux_v, aux_a,
+                         vis_scaler, aud_scaler, output_dir, device):
+    n = min(50, len(vis_sessions))
+    indices = np.random.choice(len(vis_sessions), size=n, replace=False)
+
+    weights_v, weights_a = [], []
+    comps_confidence, comps_au_dyn, comps_pose_stab, comps_hnr = [], [], [], []
+
+    with torch.no_grad():
+        for idx in indices:
+            X_v = torch.from_numpy(vis_scaler.transform(vis_sessions[idx])).unsqueeze(0).to(device)
+            X_a = torch.from_numpy(aud_scaler.transform(aud_sessions[idx])).unsqueeze(0).to(device)
+            mask_v = torch.ones(1, X_v.size(1), dtype=torch.bool, device=device)
+            mask_a = torch.ones(1, X_a.size(1), dtype=torch.bool, device=device)
+            av = {k: torch.tensor([v[idx]], device=device) for k, v in aux_v.items()}
+            aa = {k: torch.tensor([v[idx]], device=device) for k, v in aux_a.items()}
+
+            C_v = torch.clamp((av["confidence_mean"] - 0.5) / 0.5, 0.0, 1.0).item()
+            AU_dyn = torch.tanh(av["au_dyn_mean"] * 10.0).item()
+            Pose_stab = 1.0 - torch.tanh(av["pose_var_mean"] * 0.1).item()
+            HNR_norm = torch.tanh(aa["hnr_mean"] / 10.0).item()
+
+            w_v, w_a = model.reliability(av, aa)
+            weights_v.append(w_v.item())
+            weights_a.append(w_a.item())
+            comps_confidence.append(C_v)
+            comps_au_dyn.append(AU_dyn)
+            comps_pose_stab.append(Pose_stab)
+            comps_hnr.append(HNR_norm)
+
+    w_v_arr = np.array(weights_v)
+    w_a_arr = np.array(weights_a)
+    y_arr = np.array([labels[i] for i in indices])
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    scatter = axes[0, 0].scatter(w_v_arr, w_a_arr, c=y_arr, cmap="coolwarm", alpha=0.7, edgecolors="k")
+    axes[0, 0].plot([0, 1], [1, 0], "k--", linewidth=0.5)
+    axes[0, 0].set_xlabel("w_v (visual weight)")
+    axes[0, 0].set_ylabel("w_a (audio weight)")
+    axes[0, 0].set_title("Per-Session Fusion Weights")
+    axes[0, 0].set_xlim(0, 1)
+    axes[0, 0].set_ylim(0, 1)
+    cbar = fig.colorbar(scatter, ax=axes[0, 0], ticks=[0, 1])
+    cbar.set_label("Label (0=not depressed, 1=depressed)")
+
+    comp_means = [
+        np.mean(comps_confidence), np.mean(comps_au_dyn),
+        np.mean(comps_pose_stab), np.mean(comps_hnr),
+    ]
+    comp_labels = ["Confidence\nnorm", "AU\ndynamics", "Pose\nstability", "HNR\nnorm"]
+    comp_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+    axes[0, 1].bar(comp_labels, comp_means, color=comp_colors)
+    axes[0, 1].set_ylabel("Mean normalized value")
+    axes[0, 1].set_title("Reliability Component Means")
+    axes[0, 1].set_ylim(0, 1)
+
+    axes[1, 0].hist(w_v_arr, bins=20, alpha=0.7, color="#1f77b4", label="w_v (visual)")
+    axes[1, 0].hist(w_a_arr, bins=20, alpha=0.7, color="#d62728", label="w_a (audio)")
+    axes[1, 0].set_xlabel("Weight value")
+    axes[1, 0].set_ylabel("Session count")
+    axes[1, 0].set_title("Fusion Weight Distribution")
+    axes[1, 0].legend()
+
+    session_idx = np.arange(len(w_v_arr))
+    axes[1, 1].bar(session_idx, w_v_arr, alpha=0.6, label="w_v (visual)", color="#1f77b4")
+    axes[1, 1].bar(session_idx, w_a_arr, alpha=0.6, bottom=w_v_arr, label="w_a (audio)", color="#d62728")
+    axes[1, 1].set_xlabel("Session index")
+    axes[1, 1].set_ylabel("Weight")
+    axes[1, 1].set_title("Stacked Fusion Weights per Session")
+    axes[1, 1].set_ylim(0, 1)
+    axes[1, 1].legend()
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "fusion_weights.png", dpi=150, bbox_inches="tight")
+    plt.close()
 
 
 def _explain_modality_gradient(predict_fn, segment, baseline, feature_names, label, T, output_dir, device):
