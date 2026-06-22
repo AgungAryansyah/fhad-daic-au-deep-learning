@@ -32,6 +32,7 @@ from fhad_daic.data import (
 from fhad_daic.functional_features import extract_functional_features
 from fhad_daic.models import FusionModel, FusionTCNModel, GRUModel, LSTMModel, MLP, MILTCN, TCN
 from fhad_daic.training.utils import load_full_checkpoint
+from fhad_daic.utils.timeshap_wrapper import FusionTCNTimeShapWrapper
 
 
 DEFAULT_SHAP_CFG = {
@@ -291,17 +292,180 @@ def run_shap(shap_cfg: dict):
         _run_tabular_shap(model, bg_data, feature_names, train_cfg, shap_cfg)
 
 
-def _run_timeshap(train_cfg: dict, shap_cfg: dict, device: torch.device, checkpoint_path: Path):
+def _get_fusion_tcn_cols(cfg):
+    vis_cfg = cfg["features"]["visual"]
+    vis_cols = vis_cfg.get("au_regression", []) + vis_cfg.get("au_binary", []) + vis_cfg.get("pose", [])
+    if vis_cfg.get("include_confidence"):
+        vis_cols = vis_cols + ["confidence"]
+    if vis_cfg.get("confidence_aggregates"):
+        vis_cols = vis_cols + ["confidence_mean", "confidence_std", "confidence_min"]
+    aud_cols = cfg["features"]["audio"]["egemaps"]
+    return vis_cols, aud_cols
+
+
+def _build_fusion_tcn_model(cfg, vis_dim, aud_dim, device):
+    ft_cfg = cfg["fusion_tcn"]
+    return FusionTCNModel(
+        vis_dim=vis_dim, aud_dim=aud_dim,
+        vis_channels=ft_cfg["vis_channels"], aud_channels=ft_cfg["aud_channels"],
+        kernel_size=ft_cfg["kernel_size"], tcn_dropout=ft_cfg["tcn_dropout"],
+        fusion_hidden_dims=ft_cfg.get("fusion_hidden_dims", [64, 32]),
+        fusion_dropout=ft_cfg.get("fusion_dropout", 0.7),
+        num_classes=cfg["training"]["num_classes"],
+    ).to(device)
+
+
+def _run_timeshap(train_cfg, shap_cfg, device, checkpoint_path):
+    import shap
+
     ts_cfg = shap_cfg.get("timeshap", {})
     modality = ts_cfg.get("modality", "both")
-    num_sessions = ts_cfg.get("num_sessions", 5)
-    baseline = ts_cfg.get("baseline", "zeros")
+    num_sessions = ts_cfg.get("num_sessions", 1)
+    baseline_mode = ts_cfg.get("baseline", "zeros")
+    target_class = ts_cfg.get("target_class", 1)
+    max_shap_frames = ts_cfg.get("max_shap_frames", 200)
 
-    output_dir = Path(shap_cfg["output_dir"]) / train_cfg.get("experiment_name", "shap") / "timeshap"
+    output_dir = Path(shap_cfg["output_dir"]) / train_cfg.get("experiment_name", "shap") / "temporal"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"timeshap: modality={modality}, sessions={num_sessions}, baseline={baseline}")
-    print(f"timeshap support not yet implemented — output dir: {output_dir}")
+    print(f"Temporal SHAP: modality={modality}, sessions={num_sessions}, baseline={baseline_mode}")
+
+    vis_cols, aud_cols = _get_fusion_tcn_cols(train_cfg)
+    max_frames = train_cfg.get("data", {}).get("max_frames")
+    binning = train_cfg.get("binning")
+
+    data_dir = Path(train_cfg["data"]["train_dir"])
+    train_vis, train_aud, train_y, aux_v, aux_a = load_fusion_tcn_sessions(
+        data_dir, vis_cols, aud_cols, binning=binning, max_frames=max_frames)
+
+    train_vis_s = [(X, int(y)) for X, y in zip(train_vis, train_y)]
+    train_aud_s = [(X, int(y)) for X, y in zip(train_aud, train_y)]
+    vis_scaler = fit_scaler(train_vis_s)
+    aud_scaler = fit_scaler(train_aud_s)
+
+    model = _build_fusion_tcn_model(train_cfg, len(vis_cols), len(aud_cols), device)
+    load_full_checkpoint(checkpoint_path, model, device=device)
+    model.eval()
+
+    if baseline_mode == "zeros":
+        vis_baseline = np.zeros((1, len(vis_cols)), dtype=np.float32)
+        aud_baseline = np.zeros((1, len(aud_cols)), dtype=np.float32)
+    elif baseline_mode == "mean":
+        sample_vis = [vis_scaler.transform(train_vis[i]) for i in range(min(20, len(train_vis)))]
+        sample_aud = [aud_scaler.transform(train_aud[i]) for i in range(min(20, len(train_aud)))]
+        all_vis = np.concatenate(sample_vis, axis=0)
+        all_aud = np.concatenate(sample_aud, axis=0)
+        vis_baseline = np.mean(all_vis, axis=0, keepdims=True)
+        aud_baseline = np.mean(all_aud, axis=0, keepdims=True)
+    else:
+        vis_baseline = np.zeros((1, len(vis_cols)), dtype=np.float32)
+        aud_baseline = np.zeros((1, len(aud_cols)), dtype=np.float32)
+
+    aux_bl_v = {k: float(np.mean(v)) for k, v in aux_v.items()}
+    aux_bl_a = {k: float(np.mean(v)) for k, v in aux_a.items()}
+
+    wrapper = FusionTCNTimeShapWrapper(
+        model, vis_baseline, aud_baseline,
+        aux_bl_v, aux_bl_a, device, target_class=target_class,
+    )
+
+    indices = np.random.choice(len(train_vis), size=min(num_sessions, len(train_vis)), replace=False)
+
+    for session_idx in indices:
+        sid = session_idx
+        scaled_vis = vis_scaler.transform(train_vis[session_idx])
+        scaled_aud = aud_scaler.transform(train_aud[session_idx])
+
+        T_vis = min(len(scaled_vis), max_shap_frames)
+        T_aud = min(len(scaled_aud), max_shap_frames)
+
+        aux_bl = (
+            {k: float(np.mean(v)) for k, v in aux_v.items()},
+            {k: float(np.mean(v)) for k, v in aux_a.items()},
+        )
+
+        if modality in ("visual", "both"):
+            segment = scaled_vis[-T_vis:]
+            _explain_modality_deep(
+                model, segment, vis_baseline, aud_baseline, aux_bl,
+                "visual", vis_cols, f"sid_{sid}_visual", T_vis, output_dir, device)
+
+        if modality in ("audio", "both"):
+            segment = scaled_aud[-T_aud:]
+            _explain_modality_deep(
+                model, segment, aud_baseline, vis_baseline, aux_bl,
+                "audio", aud_cols, f"sid_{sid}_audio", T_aud, output_dir, device)
+
+    print(f"Saved to {output_dir}")
+
+
+def _explain_modality_gradient(predict_fn, segment, baseline, feature_names, label, T, output_dir, device):
+    pass  # replaced by _explain_modality_deep below
+
+
+def _explain_modality_deep(model, segment, own_baseline, other_baseline, baseline_aux, modality, feature_names, label, T, output_dir, device):
+    import shap
+
+    bg = np.tile(own_baseline, (T, 1))[np.newaxis]  # (1, T, F_own) — background for this modality
+    bg_t = torch.from_numpy(bg.astype(np.float32)).to(device)
+
+    test = segment[:T][np.newaxis]  # (1, T, F_own)
+
+    target_class = 1
+
+    class _ModalityShapModule(torch.nn.Module):
+        def __init__(self, model, baseline_other_t, baseline_mask, baseline_aux_v, baseline_aux_a, modality, target_class):
+            super().__init__()
+            self.fusion = model
+            self.register_buffer("baseline_other", baseline_other_t)
+            self.register_buffer("baseline_mask", baseline_mask)
+            self.baseline_aux_v = baseline_aux_v
+            self.baseline_aux_a = baseline_aux_a
+            self.modality = modality
+            self.target_class = target_class
+
+        def forward(self, x):
+            B = x.size(0)
+            ones = torch.ones(B, x.size(1), dtype=torch.bool, device=x.device)
+            av = {k: v.expand(B).to(x.device) for k, v in self.baseline_aux_v.items()}
+            aa = {k: v.expand(B).to(x.device) for k, v in self.baseline_aux_a.items()}
+            baseline_other = self.baseline_other.expand(B, -1, -1)
+            baseline_mask = self.baseline_mask.expand(B, -1)
+            if self.modality == "visual":
+                logits = self.fusion(x, ones, baseline_other, baseline_mask, av, aa)
+            else:
+                logits = self.fusion(baseline_other, baseline_mask, x, ones, av, aa)
+            return logits[:, self.target_class:self.target_class + 1]
+
+    other_baseline_t = torch.from_numpy(other_baseline[np.newaxis]).to(device).repeat(1, T, 1)
+    baseline_mask = torch.ones(1, T, dtype=torch.bool, device=device)
+    baseline_aux_v = {k: torch.tensor(v, device=device) for k, v in baseline_aux[0].items()}
+    baseline_aux_a = {k: torch.tensor(v, device=device) for k, v in baseline_aux[1].items()}
+
+    wrap = _ModalityShapModule(
+        model, other_baseline_t, baseline_mask, baseline_aux_v, baseline_aux_a,
+        modality, target_class,
+    ).to(device)
+
+    explainer = shap.DeepExplainer(wrap, bg_t)
+    shap_values = explainer.shap_values(torch.from_numpy(test.astype(np.float32)).to(device))
+
+    if isinstance(shap_values, list):
+        sv = shap_values[1] if len(shap_values) > 1 else shap_values[0]
+    else:
+        sv = shap_values
+
+    sv = np.squeeze(sv)
+    if sv.ndim > 2:
+        sv = sv[0]
+    if sv.ndim == 1:
+        sv = sv.reshape(-1, 1)
+
+    _plot_temporal_heatmap(sv, feature_names, label, output_dir)
+    _plot_temporal_event(sv, label, output_dir)
+    _plot_temporal_feature(sv, feature_names, label, output_dir)
+
+    np.save(output_dir / f"shap_values_{label}.npy", sv)
 
 
 def _extract_shap_values(shap_values):
@@ -440,6 +604,49 @@ def _plot_heatmap(sv, feature_names, output_dir):
     )
     plt.tight_layout()
     plt.savefig(output_dir / "heatmap_sample0.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def _plot_temporal_heatmap(sv, feature_names, label, output_dir):
+    top_n = min(20, len(feature_names))
+    idx = np.argsort(np.abs(sv).mean(axis=0))[-top_n:]
+    idx_list = idx.tolist()
+    plt.figure(figsize=(14, 8))
+    plt.imshow(sv[:, idx_list].T, aspect="auto", cmap="RdBu", interpolation="nearest")
+    plt.colorbar(label="SHAP value")
+    plt.xlabel("Timestep (frame)")
+    plt.ylabel("Feature")
+    plt.yticks(range(len(idx_list)), [feature_names[i] for i in idx_list], fontsize=8)
+    plt.title(f"Temporal SHAP — {label}")
+    plt.tight_layout()
+    plt.savefig(output_dir / f"heatmap_{label}.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def _plot_temporal_event(sv, label, output_dir):
+    event_importance = np.abs(sv).mean(axis=1)
+    plt.figure(figsize=(12, 4))
+    plt.plot(event_importance, linewidth=0.8)
+    plt.fill_between(range(len(event_importance)), event_importance, alpha=0.3)
+    plt.xlabel("Timestep (frame)")
+    plt.ylabel("Mean |SHAP|")
+    plt.title(f"Temporal Event Importance — {label}")
+    plt.tight_layout()
+    plt.savefig(output_dir / f"event_{label}.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def _plot_temporal_feature(sv, feature_names, label, output_dir):
+    top_n = min(20, len(feature_names))
+    feat_importance = np.abs(sv).mean(axis=0)
+    idx = np.argsort(feat_importance)[-top_n:]
+    plt.figure(figsize=(10, 6))
+    plt.barh(range(top_n), feat_importance[idx])
+    plt.yticks(range(top_n), [feature_names[i] for i in idx], fontsize=8)
+    plt.xlabel("Mean |SHAP|")
+    plt.title(f"Feature Importance — {label}")
+    plt.tight_layout()
+    plt.savefig(output_dir / f"feature_{label}.png", dpi=150, bbox_inches="tight")
     plt.close()
 
 
