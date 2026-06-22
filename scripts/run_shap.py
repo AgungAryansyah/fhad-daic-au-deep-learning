@@ -250,8 +250,10 @@ def _run_tabular_shap(model, bg_data, feature_names, cfg, args):
 
     print(f"Background: {bg_sample.shape}  Feature names: {len(feature_names)}")
 
+    model_device = next(model.parameters()).device
+
     def _predict(x_np):
-        x_t = torch.from_numpy(x_np.astype(np.float32))
+        x_t = torch.from_numpy(x_np.astype(np.float32)).to(model_device)
         with torch.no_grad():
             return model(x_t).cpu().numpy()
 
