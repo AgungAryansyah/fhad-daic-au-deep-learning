@@ -1,0 +1,13 @@
+experiment_name: "kernel-fusion-tcn"
+mode: "kernel"
+
+model:
+  checkpoint: "checkpoints/fusion-tcn/latest/best_model.pth"
+  config: "src/fhad_daic/config/fusion/tcn.yaml"
+
+kernel:
+  num_background: 50
+  num_test: 10
+
+output:
+  dir: "shap_output"

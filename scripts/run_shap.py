@@ -34,6 +34,43 @@ from fhad_daic.models import FusionModel, FusionTCNModel, GRUModel, LSTMModel, M
 from fhad_daic.training.utils import load_full_checkpoint
 
 
+DEFAULT_SHAP_CFG = {
+    "mode": "kernel",
+    "output_dir": "shap_output",
+    "num_background": 100,
+    "num_test": 20,
+}
+
+
+def _merge_config(shap_cfg: dict, args: argparse.Namespace) -> dict:
+    merged = {**DEFAULT_SHAP_CFG, **shap_cfg}
+
+    if args.mode:
+        merged["mode"] = args.mode
+    if args.checkpoint:
+        merged["checkpoint"] = args.checkpoint
+    if args.config:
+        merged["train_config_path"] = args.config
+    if args.num_bg is not None:
+        merged["num_background"] = args.num_bg
+    if args.num_test is not None:
+        merged["num_test"] = args.num_test
+    if args.output_dir:
+        merged["output_dir"] = args.output_dir
+
+    model_cfg = merged.get("model", {})
+    if "checkpoint" not in merged:
+        merged["checkpoint"] = model_cfg.get("checkpoint")
+    if "train_config_path" not in merged:
+        merged["train_config_path"] = model_cfg.get("config")
+    if "num_background" not in merged:
+        merged["num_background"] = merged.get("kernel", {}).get("num_background", 100)
+    if "num_test" not in merged:
+        merged["num_test"] = merged.get("kernel", {}).get("num_test", 20)
+
+    return merged
+
+
 def _build_model(cfg: dict, num_inputs: int, device: torch.device):
     t_cfg = cfg["training"]
     mt = t_cfg.get("model_type", "tcn")
@@ -196,42 +233,75 @@ def _load_fusion_tcn_shap_data(cfg, device, checkpoint_path, n_samples=200):
     return bg, feature_names, wrapped
 
 
-def run_shap(args):
+def run_shap(shap_cfg: dict):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    checkpoint_path = Path(args.checkpoint)
+    checkpoint_path = Path(shap_cfg["checkpoint"])
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     print(f"Checkpoint: {checkpoint_path}")
-    raw = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    cfg = raw.get("config") or yaml.safe_load(open(args.config))
-    print(f"Experiment: {cfg.get('experiment_name', 'unknown')}")
 
-    mt = cfg["training"].get("model_type", "tcn")
+    raw = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    train_cfg = raw.get("config")
+    if train_cfg is None:
+        train_cfg_path = shap_cfg.get("train_config_path")
+        if train_cfg_path:
+            with open(train_cfg_path) as f:
+                train_cfg = yaml.safe_load(f)
+        else:
+            raise ValueError("Checkpoint lacks config and no --config fallback provided")
+    print(f"Experiment: {train_cfg.get('experiment_name', 'unknown')}")
+
+    mode = shap_cfg.get("mode", "kernel")
+    print(f"SHAP mode: {mode}")
+
+    if mode == "timeshap":
+        _run_timeshap(train_cfg, shap_cfg, device, checkpoint_path)
+        return
+
+    mt = train_cfg["training"].get("model_type", "tcn")
     is_temporal = mt in ("tcn", "gru", "lstm")
     is_functional = mt == "functional"
     is_fusion = mt == "fusion"
     is_fusion_tcn = mt == "fusion_tcn"
 
+    n_bg = shap_cfg["num_background"]
+    n_test = shap_cfg["num_test"]
+
     if is_fusion_tcn:
-        bg_data, feature_names, model = _load_fusion_tcn_shap_data(cfg, device, checkpoint_path, args.num_bg)
+        bg_data, feature_names, model = _load_fusion_tcn_shap_data(train_cfg, device, checkpoint_path, n_bg)
         is_temporal = False
     elif is_fusion:
-        bg_data, feature_names = _load_fusion_data(cfg, device, args.num_bg)
+        bg_data, feature_names = _load_fusion_data(train_cfg, device, n_bg)
     elif is_functional:
-        bg_data, feature_names = _load_functional_data(cfg, device, args.num_bg)
+        bg_data, feature_names = _load_functional_data(train_cfg, device, n_bg)
     else:
-        bg_data, feature_names = _load_temporal_data(cfg, device, args.num_bg)
+        bg_data, feature_names = _load_temporal_data(train_cfg, device, n_bg)
 
     if not is_fusion_tcn:
         num_inputs = bg_data.shape[1] if (is_functional or is_fusion) else bg_data.shape[2]
-        model = _build_model(cfg, num_inputs, device)
+        model = _build_model(train_cfg, num_inputs, device)
         load_full_checkpoint(checkpoint_path, model, device=device)
         model.eval()
 
     if is_temporal:
-        _run_temporal_shap(model, bg_data, feature_names, cfg, args)
+        _run_temporal_shap(model, bg_data, feature_names, train_cfg, shap_cfg)
     else:
-        _run_tabular_shap(model, bg_data, feature_names, cfg, args)
+        _run_tabular_shap(model, bg_data, feature_names, train_cfg, shap_cfg)
+
+
+def _run_timeshap(train_cfg: dict, shap_cfg: dict, device: torch.device, checkpoint_path: Path):
+    ts_cfg = shap_cfg.get("timeshap", {})
+    modality = ts_cfg.get("modality", "both")
+    num_sessions = ts_cfg.get("num_sessions", 5)
+    baseline = ts_cfg.get("baseline", "zeros")
+
+    output_dir = Path(shap_cfg["output_dir"]) / train_cfg.get("experiment_name", "shap") / "timeshap"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"timeshap: modality={modality}, sessions={num_sessions}, baseline={baseline}")
+    print(f"timeshap support not yet implemented — output dir: {output_dir}")
 
 
 def _extract_shap_values(shap_values):
@@ -242,11 +312,12 @@ def _extract_shap_values(shap_values):
     return shap_values
 
 
-def _run_tabular_shap(model, bg_data, feature_names, cfg, args):
+def _run_tabular_shap(model, bg_data, feature_names, train_cfg, shap_cfg):
     import shap
 
     bg_np = bg_data.cpu().numpy()
-    bg_sample = bg_np[np.random.choice(len(bg_np), size=min(args.num_bg, len(bg_np)), replace=False)]
+    n_bg = min(shap_cfg["num_background"], len(bg_np))
+    bg_sample = bg_np[np.random.choice(len(bg_np), size=n_bg, replace=False)]
 
     print(f"Background: {bg_sample.shape}  Feature names: {len(feature_names)}")
 
@@ -258,11 +329,12 @@ def _run_tabular_shap(model, bg_data, feature_names, cfg, args):
             return model(x_t).cpu().numpy()
 
     explainer = shap.KernelExplainer(_predict, bg_sample, seed=42)
-    test_sample = bg_np[np.random.choice(len(bg_np), size=min(args.num_test, len(bg_np)), replace=False)]
+    n_test = min(shap_cfg["num_test"], len(bg_np))
+    test_sample = bg_np[np.random.choice(len(bg_np), size=n_test, replace=False)]
     shap_values = explainer.shap_values(test_sample, nsamples=200)
     sv = _extract_shap_values(shap_values)
 
-    output_dir = Path(args.output_dir) / cfg.get("experiment_name", "shap")
+    output_dir = Path(shap_cfg["output_dir"]) / train_cfg.get("experiment_name", "shap")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     _plot_summary(sv, test_sample, feature_names, output_dir)
@@ -274,22 +346,24 @@ def _run_tabular_shap(model, bg_data, feature_names, cfg, args):
     print(f"Saved to {output_dir}")
 
 
-def _run_temporal_shap(model, bg_data, feature_names, cfg, args):
+def _run_temporal_shap(model, bg_data, feature_names, train_cfg, shap_cfg):
     import shap
 
     bg_np = bg_data.cpu().numpy()
-    bg_sample = bg_np[np.random.choice(len(bg_np), size=min(args.num_bg, len(bg_np)), replace=False)]
+    n_bg = min(shap_cfg["num_background"], len(bg_np))
+    bg_sample = bg_np[np.random.choice(len(bg_np), size=n_bg, replace=False)]
 
     print(f"Background: {bg_sample.shape}  Features: {len(feature_names)}")
 
     bg_t = torch.from_numpy(bg_sample).float()
     explainer = shap.GradientExplainer(model, bg_t)
-    test_sample = bg_np[np.random.choice(len(bg_np), size=min(args.num_test, len(bg_np)), replace=False)]
+    n_test = min(shap_cfg["num_test"], len(bg_np))
+    test_sample = bg_np[np.random.choice(len(bg_np), size=n_test, replace=False)]
     test_t = torch.from_numpy(test_sample).float()
     shap_values = explainer.shap_values(test_t)
     sv = _extract_shap_values(shap_values)
 
-    output_dir = Path(args.output_dir) / cfg.get("experiment_name", "shap")
+    output_dir = Path(shap_cfg["output_dir"]) / train_cfg.get("experiment_name", "shap")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     sv_agg = np.abs(sv).mean(axis=1)
@@ -371,13 +445,22 @@ def _plot_heatmap(sv, feature_names, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description="SHAP explainability for fhad-daic models")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to .pth checkpoint")
-    parser.add_argument("--config", type=str, default="src/fhad_daic/config/visual/baseline.yaml", help="Fallback config if checkpoint lacks one")
-    parser.add_argument("--num_bg", type=int, default=100, help="Background samples for SHAP explainer")
-    parser.add_argument("--num_test", type=int, default=20, help="Test samples to explain")
-    parser.add_argument("--output_dir", type=str, default="shap_output", help="Output directory for plots")
+    parser.add_argument("--shap-config", type=str, required=True, help="Path to SHAP config YAML")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Override model checkpoint path")
+    parser.add_argument("--config", type=str, default=None, help="Override fallback training config path")
+    parser.add_argument("--num_bg", type=int, default=None, help="Override number of background samples")
+    parser.add_argument("--num_test", type=int, default=None, help="Override number of test samples")
+    parser.add_argument("--output_dir", type=str, default=None, help="Override output directory")
+    parser.add_argument("--mode", type=str, default=None, help="Override SHAP mode (kernel|gradient|timeshap)")
     args = parser.parse_args()
-    run_shap(args)
+
+    with open(args.shap_config) as f:
+        shap_cfg = yaml.safe_load(f)
+    shap_cfg["_config_path"] = args.shap_config
+    print(f"Loading SHAP config from: {args.shap_config}")
+
+    shap_cfg = _merge_config(shap_cfg, args)
+    run_shap(shap_cfg)
 
 
 if __name__ == "__main__":
