@@ -32,7 +32,6 @@ from fhad_daic.data import (
 from fhad_daic.functional_features import extract_functional_features
 from fhad_daic.models import FusionModel, FusionTCNModel, GRUModel, LSTMModel, MLP, MILTCN, TCN
 from fhad_daic.training.utils import load_full_checkpoint
-from fhad_daic.utils.timeshap_wrapper import FusionTCNTimeShapWrapper
 
 
 DEFAULT_SHAP_CFG = {
@@ -364,11 +363,6 @@ def _run_timeshap(train_cfg, shap_cfg, device, checkpoint_path):
     aux_bl_v = {k: float(np.mean(v)) for k, v in aux_v.items()}
     aux_bl_a = {k: float(np.mean(v)) for k, v in aux_a.items()}
 
-    wrapper = FusionTCNTimeShapWrapper(
-        model, vis_baseline, aud_baseline,
-        aux_bl_v, aux_bl_a, device, target_class=target_class,
-    )
-
     indices = np.random.choice(len(train_vis), size=min(num_sessions, len(train_vis)), replace=False)
 
     for session_idx in indices:
@@ -480,17 +474,12 @@ def _plot_fusion_weights(model, vis_sessions, aud_sessions, labels, aux_v, aux_a
     plt.close()
 
 
-def _explain_modality_gradient(predict_fn, segment, baseline, feature_names, label, T, output_dir, device):
-    pass  # replaced by _explain_modality_deep below
-
-
 def _explain_modality_deep(model, segment, own_baseline, other_baseline, baseline_aux, modality, feature_names, label, T, output_dir, device):
     import shap
 
-    bg = np.tile(own_baseline, (T, 1))[np.newaxis]  # (1, T, F_own) — background for this modality
+    bg = np.tile(own_baseline, (T, 1))[np.newaxis]
     bg_t = torch.from_numpy(bg.astype(np.float32)).to(device)
-
-    test = segment[:T][np.newaxis]  # (1, T, F_own)
+    test = segment[:T][np.newaxis]
 
     target_class = 1
 
@@ -545,8 +534,11 @@ def _explain_modality_deep(model, segment, own_baseline, other_baseline, baselin
     _plot_temporal_heatmap(sv, feature_names, label, output_dir)
     _plot_temporal_event(sv, label, output_dir)
     _plot_temporal_feature(sv, feature_names, label, output_dir)
-
     np.save(output_dir / f"shap_values_{label}.npy", sv)
+
+
+def _plot_temporal_heatmap(sv, feature_names, label, output_dir):
+    top_n = min(20, len(feature_names))
 
 
 def _extract_shap_values(shap_values):
