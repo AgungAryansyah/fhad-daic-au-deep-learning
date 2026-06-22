@@ -232,6 +232,7 @@ def load_fusion_tcn_sessions(
     vis_feature_cols: list[str],
     aud_feature_cols: list[str],
     binning: dict | None = None,
+    max_frames: int | None = None,
 ) -> tuple[list[np.ndarray], list[np.ndarray], np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray]]:
     mode = resolve_label_mode(binning)
     bins = (binning or {}).get("bins", DEFAULT_BINS)
@@ -267,7 +268,11 @@ def load_fusion_tcn_sessions(
         for c in missing_v:
             vdf[c] = 0.5
         X_v = vdf[vis_feature_cols].values.astype(np.float32)
+        if max_frames and len(X_v) > max_frames:
+            X_v = X_v[-max_frames:]
         cconf = vdf["confidence"].values.astype(np.float32) if "confidence" in vdf.columns else np.full(len(vdf), 0.5, dtype=np.float32)
+        if max_frames and len(cconf) > max_frames:
+            cconf = cconf[-max_frames:]
 
         if has_conf_agg and ci is not None:
             conf = pd.Series(X_v[:, ci])
@@ -283,8 +288,12 @@ def load_fusion_tcn_sessions(
         for c in missing_a:
             adf[c] = 0.0
         X_a = adf[aud_feature_cols].values.astype(np.float32)
+        if max_frames and len(X_a) > max_frames:
+            X_a = X_a[-max_frames:]
         X_a = np.nan_to_num(X_a, nan=0.0)
         hnr_col = adf["HNRdBACF_sma3nz"].values.astype(np.float32) if "HNRdBACF_sma3nz" in adf.columns else np.zeros(len(adf), dtype=np.float32)
+        if max_frames and len(hnr_col) > max_frames:
+            hnr_col = hnr_col[-max_frames:]
         hnr_col = np.nan_to_num(hnr_col, nan=0.0)
 
         if mode == "multiclass":

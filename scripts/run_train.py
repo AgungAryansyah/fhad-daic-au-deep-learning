@@ -160,10 +160,11 @@ def train_config(cfg: dict) -> dict:
         dev_dir = Path(cfg["data"]["dev_dir"])
 
         print("Loading paired visual+audio sessions (TCN fusion)...")
+        max_frames = cfg.get("data", {}).get("max_frames")
         train_vis, train_aud, train_y, train_aux_v, train_aux_a = load_fusion_tcn_sessions(
-            train_dir, vis_cols, aud_cols, binning=binning)
+            train_dir, vis_cols, aud_cols, binning=binning, max_frames=max_frames)
         dev_vis, dev_aud, dev_y, dev_aux_v, dev_aux_a = load_fusion_tcn_sessions(
-            dev_dir, vis_cols, aud_cols, binning=binning)
+            dev_dir, vis_cols, aud_cols, binning=binning, max_frames=max_frames)
         print(f"Train: {len(train_vis)} sessions  Dev: {len(dev_vis)} sessions")
 
         train_vis_sessions = [(X, int(y)) for X, y in zip(train_vis, train_y)]
