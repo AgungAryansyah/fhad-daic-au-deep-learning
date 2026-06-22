@@ -200,6 +200,40 @@ def train_epoch_fusion(
     return avg_loss, avg_grad, max_grad
 
 
+def train_epoch_fusion_tcn(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    max_grad_norm: float = 0.0,
+) -> tuple[float, float, float]:
+    model.train()
+    total_loss = 0.0
+    grad_norms = []
+    for X_v, mask_v, X_a, mask_a, y, aux_v, aux_a in loader:
+        X_v = X_v.to(device)
+        mask_v = mask_v.to(device)
+        X_a = X_a.to(device)
+        mask_a = mask_a.to(device)
+        y = y.to(device)
+        aux_v = {k: v.to(device) for k, v in aux_v.items()}
+        aux_a = {k: v.to(device) for k, v in aux_a.items()}
+        optimizer.zero_grad()
+        loss = criterion(model(X_v, mask_v, X_a, mask_a, aux_v, aux_a), y)
+        loss.backward()
+        gn = _compute_grad_norm(model)
+        grad_norms.append(gn)
+        if max_grad_norm > 0:
+            nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+        optimizer.step()
+        total_loss += loss.item() * len(y)
+    avg_loss = total_loss / len(loader.dataset)
+    avg_grad = float(np.mean(grad_norms)) if grad_norms else 0.0
+    max_grad = float(np.max(grad_norms)) if grad_norms else 0.0
+    return avg_loss, avg_grad, max_grad
+
+
 def evaluate_fusion(
     model: nn.Module,
     loader: DataLoader,
@@ -217,6 +251,33 @@ def evaluate_fusion(
             aux_v = {k: v.to(device) for k, v in aux_v.items()}
             aux_a = {k: v.to(device) for k, v in aux_a.items()}
             logits = model(F_v, F_a, aux_v, aux_a)
+            total_loss += criterion(logits, y).item() * len(y)
+            all_preds.extend(logits.argmax(dim=1).cpu().tolist())
+            all_labels.extend(y.cpu().tolist())
+    avg_loss = total_loss / len(loader.dataset)
+    macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
+    return avg_loss, macro_f1, all_preds, all_labels
+
+
+def evaluate_fusion_tcn(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> tuple[float, float, list[int], list[int]]:
+    model.eval()
+    total_loss = 0.0
+    all_preds, all_labels = [], []
+    with torch.no_grad():
+        for X_v, mask_v, X_a, mask_a, y, aux_v, aux_a in loader:
+            X_v = X_v.to(device)
+            mask_v = mask_v.to(device)
+            X_a = X_a.to(device)
+            mask_a = mask_a.to(device)
+            y = y.to(device)
+            aux_v = {k: v.to(device) for k, v in aux_v.items()}
+            aux_a = {k: v.to(device) for k, v in aux_a.items()}
+            logits = model(X_v, mask_v, X_a, mask_a, aux_v, aux_a)
             total_loss += criterion(logits, y).item() * len(y)
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(y.cpu().tolist())
@@ -268,6 +329,7 @@ def run_training(
     config: dict | None = None,
     is_mil: bool = False,
     is_fusion: bool = False,
+    is_fusion_tcn: bool = False,
 ) -> dict:
     load_dotenv()
 
@@ -352,6 +414,11 @@ def run_training(
                 model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip,
             )
             dev_loss, dev_f1, dev_preds, dev_labels = evaluate_fusion(model, dev_loader, criterion, device)
+        elif is_fusion_tcn:
+            train_loss, train_grad_avg, train_grad_max = train_epoch_fusion_tcn(
+                model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip,
+            )
+            dev_loss, dev_f1, dev_preds, dev_labels = evaluate_fusion_tcn(model, dev_loader, criterion, device)
         else:
             train_loss, train_grad_avg, train_grad_max = train_epoch(
                 model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip,

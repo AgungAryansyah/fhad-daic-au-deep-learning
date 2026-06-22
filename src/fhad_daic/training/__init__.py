@@ -3,12 +3,14 @@ from .train import (
     _build_tags,
     evaluate,
     evaluate_fusion,
+    evaluate_fusion_tcn,
     evaluate_mil,
     get_bag_labels,
     get_class_names,
     run_training,
     train_epoch,
     train_epoch_fusion,
+    train_epoch_fusion_tcn,
     train_epoch_mil,
 )
 from .utils import load_full_checkpoint, save_checkpoint
@@ -18,6 +20,7 @@ __all__ = [
     "_build_tags",
     "evaluate",
     "evaluate_fusion",
+    "evaluate_fusion_tcn",
     "evaluate_mil",
     "get_bag_labels",
     "get_class_names",
@@ -26,5 +29,6 @@ __all__ = [
     "save_checkpoint",
     "train_epoch",
     "train_epoch_fusion",
+    "train_epoch_fusion_tcn",
     "train_epoch_mil",
 ]
