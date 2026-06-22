@@ -1,0 +1,16 @@
+experiment_name: "timeshap-fusion-tcn"
+mode: "timeshap"
+
+model:
+  checkpoint: "checkpoints/fusion-tcn/latest/best_model.pth"
+  config: "src/fhad_daic/config/fusion/tcn.yaml"
+
+timeshap:
+  modality: "both"
+  num_sessions: 3
+  baseline: "zeros"
+  target_class: 1
+  max_shap_frames: 200
+
+output:
+  dir: "shap_output"
