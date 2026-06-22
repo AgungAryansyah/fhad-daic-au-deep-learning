@@ -1,0 +1,144 @@
+experiment_name: "fusion-tcn-multiclass"
+tags:
+  - fusion
+  - fusion-tcn
+  - tcn
+  - reliability-weighted
+  - multimodal
+  - session-level
+  - temporal-encoders
+  - vis-channels-32-64-64
+  - aud-channels-32-64-64
+  - kernel-7
+  - tcn-dropout-0.5
+  - fusion-hidden-64-32
+  - fusion-dropout-0.7
+  - wd-1e-3
+  - lr-5e-5
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
+  - no-window
+  - confidence-dual-path
+  - modality-comparison
+  - multiclass
+  - 4-class
+  - phq-bins
+
+binning:
+  mode: "phq_multiclass"
+  bins:
+    - {label: 0, name: "minimal", min: 0, max: 4}
+    - {label: 1, name: "mild", min: 5, max: 9}
+    - {label: 2, name: "moderate", min: 10, max: 14}
+    - {label: 3, name: "severe", min: 15, max: 24}
+
+data:
+  cleaned_data_root: "data"
+  train_dir: "data/train"
+  dev_dir: "data/dev"
+  checkpoints_dir: "checkpoints"
+  # max_frames: 4096  # truncate long sessions for low-memory GPUs (null = full session)
+
+features:
+  visual:
+    au_regression:
+      - AU01_r
+      - AU02_r
+      - AU04_r
+      - AU05_r
+      - AU06_r
+      - AU07_r
+      - AU09_r
+      - AU10_r
+      - AU12_r
+      - AU14_r
+      - AU15_r
+      - AU17_r
+      - AU20_r
+      - AU23_r
+      - AU25_r
+      - AU26_r
+      - AU45_r
+    au_binary:
+      - AU01_c
+      - AU02_c
+      - AU04_c
+      - AU05_c
+      - AU06_c
+      - AU07_c
+      - AU09_c
+      - AU10_c
+      - AU12_c
+      - AU14_c
+      - AU15_c
+      - AU17_c
+      - AU20_c
+      - AU23_c
+      - AU25_c
+      - AU26_c
+      - AU28_c
+      - AU45_c
+    pose:
+      - pose_Rx
+      - pose_Ry
+      - pose_Rz
+      - pose_Tx
+      - pose_Ty
+      - pose_Tz
+    include_confidence: true
+    confidence_aggregates: true
+  audio:
+    egemaps:
+      - Loudness_sma3
+      - alphaRatio_sma3
+      - hammarbergIndex_sma3
+      - slope0-500_sma3
+      - slope500-1500_sma3
+      - spectralFlux_sma3
+      - mfcc1_sma3
+      - mfcc2_sma3
+      - mfcc3_sma3
+      - mfcc4_sma3
+      - F0semitoneFrom27.5Hz_sma3nz
+      - jitterLocal_sma3nz
+      - shimmerLocaldB_sma3nz
+      - HNRdBACF_sma3nz
+      - logRelF0-H1-H2_sma3nz
+      - logRelF0-H1-A3_sma3nz
+      - F1frequency_sma3nz
+      - F1bandwidth_sma3nz
+      - F1amplitudeLogRelF0_sma3nz
+      - F2frequency_sma3nz
+      - F2amplitudeLogRelF0_sma3nz
+      - F3frequency_sma3nz
+      - F3amplitudeLogRelF0_sma3nz
+
+fusion_tcn:
+  vis_channels: [32, 64, 64]
+  aud_channels: [32, 64, 64]
+  kernel_size: 7
+  tcn_dropout: 0.5
+  fusion_hidden_dims: [64, 32]
+  fusion_dropout: 0.7
+  weight_decay: 0.001
+
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 5
+  min_lr: 0.000001
+
+training:
+  model_type: "fusion_tcn"
+  num_classes: 4
+  batch_size: 1
+  num_workers: 4
+  learning_rate: 0.00005
+  num_epochs: 100
+  early_stopping_patience: 15
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1
