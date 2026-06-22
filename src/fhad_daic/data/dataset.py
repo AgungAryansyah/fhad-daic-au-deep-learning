@@ -227,6 +227,151 @@ def load_fusion_sessions(
     return vis_sessions, aud_sessions, np.array(labels, dtype=np.int64), aux_v, aux_a
 
 
+def load_fusion_tcn_sessions(
+    data_dir: Path,
+    vis_feature_cols: list[str],
+    aud_feature_cols: list[str],
+    binning: dict | None = None,
+) -> tuple[list[np.ndarray], list[np.ndarray], np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray]]:
+    mode = resolve_label_mode(binning)
+    bins = (binning or {}).get("bins", DEFAULT_BINS)
+
+    vis_files = sorted([f for f in data_dir.glob("*_clean.csv") if "egemaps" not in f.name])
+    aud_files = sorted(data_dir.glob("*_egemaps_clean.csv"))
+
+    aud_by_sid = {}
+    for ap in aud_files:
+        sid = int(ap.stem.replace("_egemaps_clean", ""))
+        aud_by_sid[sid] = ap
+
+    vis_sessions = []
+    aud_sessions = []
+    labels = []
+
+    aux_confidence = []
+    aux_au_dyn = []
+    aux_pose_var = []
+    aux_hnr = []
+
+    has_conf_agg = "confidence_mean" in vis_feature_cols
+    ci = vis_feature_cols.index("confidence") if "confidence" in vis_feature_cols else None
+
+    for vp in vis_files:
+        sid = int(vp.stem.replace("_clean", ""))
+        if sid not in aud_by_sid:
+            continue
+        ap = aud_by_sid[sid]
+
+        vdf = pd.read_csv(vp)
+        missing_v = [c for c in vis_feature_cols if c not in vdf.columns]
+        for c in missing_v:
+            vdf[c] = 0.5
+        X_v = vdf[vis_feature_cols].values.astype(np.float32)
+        cconf = vdf["confidence"].values.astype(np.float32) if "confidence" in vdf.columns else np.full(len(vdf), 0.5, dtype=np.float32)
+
+        if has_conf_agg and ci is not None:
+            conf = pd.Series(X_v[:, ci])
+            w = min(30, len(X_v))
+            X_v[:, vis_feature_cols.index("confidence_mean")] = conf.rolling(w, center=True, min_periods=1).mean().values
+            s = conf.rolling(w, center=True, min_periods=1).std(ddof=0)
+            X_v[:, vis_feature_cols.index("confidence_std")] = s.fillna(0.0).values
+            m = conf.rolling(w, center=True, min_periods=1).min()
+            X_v[:, vis_feature_cols.index("confidence_min")] = m.bfill().ffill().values
+
+        adf = pd.read_csv(ap)
+        missing_a = [c for c in aud_feature_cols if c not in adf.columns]
+        for c in missing_a:
+            adf[c] = 0.0
+        X_a = adf[aud_feature_cols].values.astype(np.float32)
+        X_a = np.nan_to_num(X_a, nan=0.0)
+        hnr_col = adf["HNRdBACF_sma3nz"].values.astype(np.float32) if "HNRdBACF_sma3nz" in adf.columns else np.zeros(len(adf), dtype=np.float32)
+        hnr_col = np.nan_to_num(hnr_col, nan=0.0)
+
+        if mode == "multiclass":
+            y = map_phq_to_bin(float(vdf["phq_score"].iloc[0]), bins)
+        else:
+            y = int(vdf["phq_binary"].iloc[0])
+
+        vis_sessions.append(X_v)
+        aud_sessions.append(X_a)
+        labels.append(y)
+
+        au_dyn = np.array([np.std(X_v[:, i]) for i in range(len(vis_feature_cols))])
+        pose_cols_v = [i for i, c in enumerate(vis_feature_cols) if c.startswith("pose_")]
+        pvar = np.mean([np.std(X_v[:, i]) for i in pose_cols_v]) if pose_cols_v else 0.0
+
+        aux_confidence.append(float(np.mean(cconf)))
+        aux_au_dyn.append(float(np.mean(au_dyn)))
+        aux_pose_var.append(float(pvar))
+        aux_hnr.append(float(np.mean(hnr_col)))
+
+    aux_v = {
+        "confidence_mean": np.array(aux_confidence, dtype=np.float32),
+        "au_dyn_mean": np.array(aux_au_dyn, dtype=np.float32),
+        "pose_var_mean": np.array(aux_pose_var, dtype=np.float32),
+    }
+    aux_a = {
+        "hnr_mean": np.array(aux_hnr, dtype=np.float32),
+    }
+
+    return vis_sessions, aud_sessions, np.array(labels, dtype=np.int64), aux_v, aux_a
+
+
+class FusionTCNDataset(Dataset):
+    def __init__(
+        self,
+        vis_sessions: list[np.ndarray],
+        aud_sessions: list[np.ndarray],
+        labels: np.ndarray,
+        aux_v: dict[str, np.ndarray],
+        aux_a: dict[str, np.ndarray],
+    ):
+        self.vis_sessions = vis_sessions
+        self.aud_sessions = aud_sessions
+        self.labels = torch.from_numpy(labels)
+        self.aux_v = {k: torch.from_numpy(v) for k, v in aux_v.items()}
+        self.aux_a = {k: torch.from_numpy(v) for k, v in aux_a.items()}
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, idx: int):
+        return (
+            torch.from_numpy(self.vis_sessions[idx]),
+            torch.from_numpy(self.aud_sessions[idx]),
+            self.labels[idx],
+            {k: v[idx] for k, v in self.aux_v.items()},
+            {k: v[idx] for k, v in self.aux_a.items()},
+        )
+
+
+def collate_fusion_tcn(
+    batch: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    X_v_list = [item[0] for item in batch]
+    X_a_list = [item[1] for item in batch]
+    y_list = [item[2] for item in batch]
+    aux_v_list = [item[3] for item in batch]
+    aux_a_list = [item[4] for item in batch]
+
+    y = torch.stack(y_list)
+
+    X_v = torch.nn.utils.rnn.pad_sequence(X_v_list, batch_first=True)
+    mask_v = torch.zeros(len(batch), X_v.size(1), dtype=torch.bool)
+    for i, x in enumerate(X_v_list):
+        mask_v[i, :len(x)] = True
+
+    X_a = torch.nn.utils.rnn.pad_sequence(X_a_list, batch_first=True)
+    mask_a = torch.zeros(len(batch), X_a.size(1), dtype=torch.bool)
+    for i, x in enumerate(X_a_list):
+        mask_a[i, :len(x)] = True
+
+    aux_v = {k: torch.stack([a[k] for a in aux_v_list]) for k in aux_v_list[0]}
+    aux_a = {k: torch.stack([a[k] for a in aux_a_list]) for k in aux_a_list[0]}
+
+    return X_v, mask_v, X_a, mask_a, y, aux_v, aux_a
+
+
 class FusionDataset(Dataset):
     def __init__(
         self,
