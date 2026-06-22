@@ -18,16 +18,19 @@ from fhad_daic.config import get_feature_cols
 from fhad_daic.data import (
     AUWindowDataset,
     FusionDataset,
+    FusionTCNDataset,
     apply_scaler,
+    collate_fusion_tcn,
     fit_scaler,
     load_fusion_sessions,
+    load_fusion_tcn_sessions,
     load_sessions,
     resolve_label_mode,
     resolve_modality,
     slide_windows,
 )
 from fhad_daic.functional_features import extract_functional_features
-from fhad_daic.models import FusionModel, GRUModel, LSTMModel, MLP, MILTCN, TCN
+from fhad_daic.models import FusionModel, FusionTCNModel, GRUModel, LSTMModel, MLP, MILTCN, TCN
 from fhad_daic.training.utils import load_full_checkpoint
 
 
@@ -36,7 +39,21 @@ def _build_model(cfg: dict, num_inputs: int, device: torch.device):
     mt = t_cfg.get("model_type", "tcn")
     nc = t_cfg["num_classes"]
 
-    if mt == "mil":
+    if mt == "fusion_tcn":
+        ft_cfg = cfg["fusion_tcn"]
+        vis_dim = num_inputs // 2
+        aud_dim = num_inputs - vis_dim
+        return FusionTCNModel(
+            vis_dim=vis_dim, aud_dim=aud_dim,
+            vis_channels=ft_cfg["vis_channels"],
+            aud_channels=ft_cfg["aud_channels"],
+            kernel_size=ft_cfg["kernel_size"],
+            tcn_dropout=ft_cfg["tcn_dropout"],
+            fusion_hidden_dims=ft_cfg["fusion_hidden_dims"],
+            fusion_dropout=ft_cfg["fusion_dropout"],
+            num_classes=nc,
+        ).to(device)
+    elif mt == "mil":
         tc = cfg["tcn"]
         ad = cfg.get("mil", {}).get("attn_dim", 64)
         return MILTCN(num_inputs, tc["num_channels"], tc["kernel_size"], tc["dropout"], nc, ad).to(device)
@@ -117,6 +134,68 @@ def _load_temporal_data(cfg, device, n_samples=200):
     return bg, feature_cols
 
 
+def _load_fusion_tcn_shap_data(cfg, device, checkpoint_path, n_samples=200):
+    vis_cfg = cfg["features"]["visual"]
+    vis_cols = vis_cfg.get("au_regression", []) + vis_cfg.get("au_binary", []) + vis_cfg.get("pose", [])
+    if vis_cfg.get("include_confidence"):
+        vis_cols = vis_cols + ["confidence"]
+    if vis_cfg.get("confidence_aggregates"):
+        vis_cols = vis_cols + ["confidence_mean", "confidence_std", "confidence_min"]
+    aud_cols = cfg["features"]["audio"]["egemaps"]
+    max_frames = cfg.get("data", {}).get("max_frames")
+    binning = cfg.get("binning")
+
+    train_vis, train_aud, train_y, aux_v, aux_a = load_fusion_tcn_sessions(
+        Path(cfg["data"]["train_dir"]), vis_cols, aud_cols, binning=binning, max_frames=max_frames)
+
+    train_vis_s = [(X, int(y)) for X, y in zip(train_vis, train_y)]
+    train_aud_s = [(X, int(y)) for X, y in zip(train_aud, train_y)]
+    vis_scaler = fit_scaler(train_vis_s)
+    aud_scaler = fit_scaler(train_aud_s)
+
+    ft_cfg = cfg["fusion_tcn"]
+    full_model = FusionTCNModel(
+        vis_dim=len(vis_cols), aud_dim=len(aud_cols),
+        vis_channels=ft_cfg["vis_channels"], aud_channels=ft_cfg["aud_channels"],
+        kernel_size=ft_cfg["kernel_size"], tcn_dropout=ft_cfg["tcn_dropout"],
+        fusion_hidden_dims=ft_cfg.get("fusion_hidden_dims", [64, 32]),
+        fusion_dropout=ft_cfg.get("fusion_dropout", 0.7),
+        num_classes=cfg["training"]["num_classes"],
+    ).to(device)
+    load_full_checkpoint(checkpoint_path, full_model, device=device)
+    full_model.eval()
+
+    fusion_features = []
+    with torch.no_grad():
+        for i in range(len(train_vis)):
+            X_v = torch.from_numpy(vis_scaler.transform(train_vis[i])).unsqueeze(0).to(device)
+            X_a = torch.from_numpy(aud_scaler.transform(train_aud[i])).unsqueeze(0).to(device)
+            mask_v = torch.ones(1, X_v.size(1), dtype=torch.bool, device=device)
+            mask_a = torch.ones(1, X_a.size(1), dtype=torch.bool, device=device)
+            av = {k: torch.tensor([v[i]], device=device) for k, v in aux_v.items()}
+            aa = {k: torch.tensor([v[i]], device=device) for k, v in aux_a.items()}
+
+            V = full_model.proj_v(full_model.vis_encoder(X_v, mask_v))
+            A = full_model.proj_a(full_model.aud_encoder(X_a, mask_a))
+            w_v, w_a = full_model.reliability(av, aa)
+            F = torch.cat([w_v * V, w_a * A], dim=-1)
+            fusion_features.append(F.cpu().numpy())
+
+    F_all = np.concatenate(fusion_features, axis=0)
+    n = min(n_samples, len(F_all))
+    idx = np.random.choice(len(F_all), size=n, replace=False)
+    bg = torch.from_numpy(F_all[idx]).to(device)
+
+    feature_names = (
+        [f"vis_emb_{i}" for i in range(F_all.shape[1] // 2)] +
+        [f"aud_emb_{i}" for i in range(F_all.shape[1] // 2, F_all.shape[1])]
+    )
+
+    classifier = full_model.classifier
+    wrapped = torch.nn.Sequential(classifier).to(device)
+    return bg, feature_names, wrapped
+
+
 def run_shap(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -131,23 +210,36 @@ def run_shap(args):
     is_temporal = mt in ("tcn", "gru", "lstm")
     is_functional = mt == "functional"
     is_fusion = mt == "fusion"
+    is_fusion_tcn = mt == "fusion_tcn"
 
-    if is_fusion:
+    if is_fusion_tcn:
+        bg_data, feature_names, model = _load_fusion_tcn_shap_data(cfg, device, checkpoint_path, args.num_bg)
+        is_temporal = False
+    elif is_fusion:
         bg_data, feature_names = _load_fusion_data(cfg, device, args.num_bg)
     elif is_functional:
         bg_data, feature_names = _load_functional_data(cfg, device, args.num_bg)
     else:
         bg_data, feature_names = _load_temporal_data(cfg, device, args.num_bg)
 
-    num_inputs = bg_data.shape[1] if is_functional else bg_data.shape[2]
-    model = _build_model(cfg, num_inputs, device)
-    load_full_checkpoint(checkpoint_path, model, device=device)
-    model.eval()
+    if not is_fusion_tcn:
+        num_inputs = bg_data.shape[1] if (is_functional or is_fusion) else bg_data.shape[2]
+        model = _build_model(cfg, num_inputs, device)
+        load_full_checkpoint(checkpoint_path, model, device=device)
+        model.eval()
 
     if is_temporal:
         _run_temporal_shap(model, bg_data, feature_names, cfg, args)
     else:
         _run_tabular_shap(model, bg_data, feature_names, cfg, args)
+
+
+def _extract_shap_values(shap_values):
+    if isinstance(shap_values, list):
+        return shap_values[1]
+    if shap_values.ndim == 3:
+        return shap_values[:, :, 1]
+    return shap_values
 
 
 def _run_tabular_shap(model, bg_data, feature_names, cfg, args):
@@ -166,11 +258,7 @@ def _run_tabular_shap(model, bg_data, feature_names, cfg, args):
     explainer = shap.KernelExplainer(_predict, bg_sample, seed=42)
     test_sample = bg_np[np.random.choice(len(bg_np), size=min(args.num_test, len(bg_np)), replace=False)]
     shap_values = explainer.shap_values(test_sample, nsamples=200)
-
-    if isinstance(shap_values, list):
-        sv = shap_values[1]
-    else:
-        sv = shap_values
+    sv = _extract_shap_values(shap_values)
 
     output_dir = Path(args.output_dir) / cfg.get("experiment_name", "shap")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -197,11 +285,7 @@ def _run_temporal_shap(model, bg_data, feature_names, cfg, args):
     test_sample = bg_np[np.random.choice(len(bg_np), size=min(args.num_test, len(bg_np)), replace=False)]
     test_t = torch.from_numpy(test_sample).float()
     shap_values = explainer.shap_values(test_t)
-
-    if isinstance(shap_values, list):
-        sv = shap_values[1]
-    else:
-        sv = shap_values
+    sv = _extract_shap_values(shap_values)
 
     output_dir = Path(args.output_dir) / cfg.get("experiment_name", "shap")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -220,8 +304,9 @@ def _plot_summary(sv, test_data, feature_names, output_dir):
     import shap
     top_n = min(20, len(feature_names))
     idx = np.argsort(np.abs(sv).mean(axis=0))[-top_n:]
+    idx_list = idx.tolist()
     plt.figure(figsize=(10, 8))
-    shap.summary_plot(sv[:, idx], test_data[:, idx], feature_names=[feature_names[i] for i in idx], show=False)
+    shap.summary_plot(sv[:, idx_list], test_data[:, idx_list], feature_names=[feature_names[i] for i in idx_list], show=False)
     plt.tight_layout()
     plt.savefig(output_dir / "summary_beeswarm.png", dpi=150, bbox_inches="tight")
     plt.close()
@@ -246,13 +331,14 @@ def _plot_waterfall(sv, test_data, feature_names, output_dir):
     top_n = min(20, len(feature_names))
     idx = np.argsort(np.abs(sv).mean(axis=0))[-top_n:]
     idx_sorted = idx[np.argsort(sv[0, idx])]
+    idx_sorted_list = idx_sorted.tolist()
     plt.figure(figsize=(10, 8))
     shap.waterfall_plot(
         shap.Explanation(
-            values=sv[0, idx_sorted],
+            values=sv[0, idx_sorted_list],
             base_values=float(sv[0].sum()),
-            data=test_data[0, idx_sorted],
-            feature_names=[feature_names[i] for i in idx_sorted],
+            data=test_data[0, idx_sorted_list],
+            feature_names=[feature_names[i] for i in idx_sorted_list],
         ),
         show=False,
         max_display=20,
@@ -267,11 +353,12 @@ def _plot_heatmap(sv, feature_names, output_dir):
     sv_sample = sv[0]
     top_n = min(20, len(feature_names))
     idx = np.argsort(np.abs(sv_sample).mean(axis=0))[-top_n:]
+    idx_list = idx.tolist()
     plt.figure(figsize=(14, 8))
     shap.heatmap_plot(
         shap.Explanation(
-            values=sv_sample[:, idx],
-            feature_names=[feature_names[i] for i in idx],
+            values=sv_sample[:, idx_list],
+            feature_names=[feature_names[i] for i in idx_list],
         ),
         show=False,
     )
