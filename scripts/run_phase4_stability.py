@@ -113,7 +113,13 @@ def main():
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
 
-    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    device_str = args.device
+    if device_str in ("gpu", "cuda"):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    elif device_str:
+        device = torch.device(device_str)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
     sweep_dir = Path("checkpoints") / args.sweep

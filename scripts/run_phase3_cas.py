@@ -1,6 +1,7 @@
 import argparse
 import csv
 import sys
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -68,7 +69,7 @@ def build_model(cfg: dict, num_inputs: int, device: torch.device):
                     tcn_cfg["dropout"], nc)
 
 
-def load_data_for_shap(cfg: dict, feature_cols: list[str], modality: str, binning, n_max: int = 200):
+def load_data_for_shap(cfg: dict, feature_cols: list[str], modality: str, binning, n_max: int = 50):
     train_dir = Path(cfg["data"]["train_dir"])
 
     sessions = load_sessions(train_dir, feature_cols, binning=binning, modality=modality)
@@ -108,21 +109,53 @@ def run_shap_on_model(
         explainer = shap.GradientExplainer(model, bg_t)
         shap_values = explainer.shap_values(test_t)
 
-    if isinstance(shap_values, list):
-        sv = shap_values[1]
-    elif shap_values.ndim == 3:
-        sv_arr = np.array(shap_values)
-        if sv_arr.ndim == 3 and sv_arr.shape[2] > 1:
-            sv = sv_arr[:, :, 1]
-        else:
-            sv = sv_arr
-    else:
-        sv = np.array(shap_values)
+    sv = np.asarray(shap_values)
 
+    # GradientExplainer returns a list of arrays (one per output class) for
+    # multi-output models; choose the positive/depressed class.
+    if isinstance(shap_values, list):
+        sv = np.asarray(shap_values[1] if len(shap_values) > 1 else shap_values[0])
+
+    # If the last dimension is the number of classes, extract class 1.
+    if sv.ndim >= 3 and sv.shape[-1] > 1 and sv.shape[-1] != len(feature_cols):
+        sv = sv[..., 1]
+
+    sv = np.asarray(sv)
+
+    # Aggregate SHAP values to one scalar per feature. Temporal models produce
+    # (n_samples, n_features, window_size); we average over samples and time.
     if sv.ndim == 3:
-        sv = sv.mean(axis=1)
-    feat_imp = np.abs(sv).mean(axis=0)
-    return {feature_cols[i]: float(feat_imp[i]) for i in range(len(feature_cols))}
+        if sv.shape[1] == len(feature_cols):
+            feat_imp = np.abs(sv).mean(axis=(0, 2))
+        elif sv.shape[2] == len(feature_cols):
+            feat_imp = np.abs(sv).mean(axis=(0, 1))
+        else:
+            feat_imp = np.abs(sv).mean(axis=(0, 1))
+    elif sv.ndim == 2:
+        feat_imp = np.abs(sv).mean(axis=0)
+    elif sv.ndim == 1:
+        feat_imp = np.abs(sv)
+    else:
+        feat_imp = np.array([])
+
+    if feat_imp.ndim == 0:
+        feat_imp = np.array([float(feat_imp)])
+
+    def _to_scalar(v):
+        if isinstance(v, (np.ndarray, torch.Tensor)):
+            v = v.squeeze()
+            if v.numel() > 1:
+                return float(v.mean())
+            return float(v.item())
+        return float(v)
+
+    result = {}
+    for i, name in enumerate(feature_cols):
+        if i < len(feat_imp):
+            result[name] = _to_scalar(feat_imp[i])
+        else:
+            result[name] = 0.0
+    return result
 
 
 def main():
@@ -139,7 +172,13 @@ def main():
     N_BG = args.n_bg
     N_TEST = args.n_test
 
-    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    device_str = args.device
+    if device_str in ("gpu", "cuda"):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    elif device_str:
+        device = torch.device(device_str)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
     sweep_dir = Path("checkpoints") / args.sweep
@@ -195,8 +234,13 @@ def main():
                 continue
 
             cas_scores = compute_cas_at_k(fc, importance, args.ks, clinical)
+        except torch.cuda.OutOfMemoryError:
+            print(f"\n  OOM {exp_name} — skipping")
+            torch.cuda.empty_cache()
+            continue
         except Exception as e:
             print(f"\n  SKIP {exp_name}: {e}")
+            traceback.print_exc()
             continue
         finally:
             del model
