@@ -4,5 +4,6 @@ from .mlp import MLP
 from .gru import GRUModel
 from .lstm import LSTMModel
 from .fusion import FusionModel, FusionTCNModel, ReliabilityCalculator
+from .fusion_variants import ConcatFusionModel, ConcatFusionTCNModel
 
-__all__ = ["CausalConv1d", "TCNBlock", "TCN", "TCNEncoder", "MILTCN", "MLP", "GRUModel", "LSTMModel", "FusionModel", "FusionTCNModel", "ReliabilityCalculator"]
+__all__ = ["CausalConv1d", "TCNBlock", "TCN", "TCNEncoder", "MILTCN", "MLP", "GRUModel", "LSTMModel", "FusionModel", "FusionTCNModel", "ReliabilityCalculator", "ConcatFusionModel", "ConcatFusionTCNModel"]

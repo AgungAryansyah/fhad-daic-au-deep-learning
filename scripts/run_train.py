@@ -31,7 +31,7 @@ from fhad_daic.data import (
     slide_windows,
 )
 from fhad_daic.functional_features import extract_functional_features
-from fhad_daic.models import FusionModel, FusionTCNModel, GRUModel, LSTMModel, MLP, MILTCN, TCN
+from fhad_daic.models import ConcatFusionModel, ConcatFusionTCNModel, FusionModel, FusionTCNModel, GRUModel, LSTMModel, MLP, MILTCN, TCN
 from fhad_daic.training import run_training
 
 
@@ -48,6 +48,8 @@ def train_config(cfg: dict) -> dict:
     is_functional = cfg.get("training", {}).get("model_type") == "functional"
     is_fusion = cfg.get("training", {}).get("model_type") == "fusion"
     is_fusion_tcn = cfg.get("training", {}).get("model_type") == "fusion_tcn"
+    is_concat_fusion = cfg.get("training", {}).get("model_type") == "concat_fusion"
+    is_concat_fusion_tcn = cfg.get("training", {}).get("model_type") == "concat_fusion_tcn"
     is_gru = cfg.get("training", {}).get("model_type") == "gru"
     is_lstm = cfg.get("training", {}).get("model_type") == "lstm"
 
@@ -69,7 +71,7 @@ def train_config(cfg: dict) -> dict:
         print(f"\nLOSO CV macro F1: {result['macro_f1']:.4f}")
         return result
 
-    if is_fusion:
+    if is_fusion or is_concat_fusion:
         vis_cfg = cfg["features"]["visual"]
         vis_cols = vis_cfg.get("au_regression", []) + vis_cfg.get("au_binary", []) + vis_cfg.get("pose", [])
         aud_cols = cfg["features"]["audio"]["egemaps"]
@@ -113,13 +115,22 @@ def train_config(cfg: dict) -> dict:
         )
 
         fusion_cfg = cfg.get("fusion", {})
-        model = FusionModel(
-            vis_dim=train_Fv.shape[1],
-            aud_dim=train_Fa.shape[1],
-            hidden_dims=fusion_cfg.get("hidden_dims", [64, 32]),
-            dropout=fusion_cfg.get("dropout", 0.7),
-            num_classes=t_cfg["num_classes"],
-        ).to(device)
+        if is_concat_fusion:
+            model = ConcatFusionModel(
+                vis_dim=train_Fv.shape[1],
+                aud_dim=train_Fa.shape[1],
+                hidden_dims=fusion_cfg.get("hidden_dims", [64, 32]),
+                dropout=fusion_cfg.get("dropout", 0.7),
+                num_classes=t_cfg["num_classes"],
+            ).to(device)
+        else:
+            model = FusionModel(
+                vis_dim=train_Fv.shape[1],
+                aud_dim=train_Fa.shape[1],
+                hidden_dims=fusion_cfg.get("hidden_dims", [64, 32]),
+                dropout=fusion_cfg.get("dropout", 0.7),
+                num_classes=t_cfg["num_classes"],
+            ).to(device)
 
         class_weights = compute_class_weights(train_y, t_cfg["num_classes"]).to(device)
         label_smoothing = t_cfg.get("label_smoothing", 0.0)
@@ -147,7 +158,7 @@ def train_config(cfg: dict) -> dict:
         print(f"\nBest dev macro F1: {result['best_dev_f1']:.4f}")
         return result
 
-    if is_fusion_tcn:
+    if is_fusion_tcn or is_concat_fusion_tcn:
         vis_cfg = cfg["features"]["visual"]
         vis_cols = vis_cfg.get("au_regression", []) + vis_cfg.get("au_binary", []) + vis_cfg.get("pose", [])
         if vis_cfg.get("include_confidence"):
@@ -199,17 +210,30 @@ def train_config(cfg: dict) -> dict:
         )
 
         ft_cfg = cfg.get("fusion_tcn", {})
-        model = FusionTCNModel(
-            vis_dim=len(vis_cols),
-            aud_dim=len(aud_cols),
-            vis_channels=ft_cfg["vis_channels"],
-            aud_channels=ft_cfg["aud_channels"],
-            kernel_size=ft_cfg["kernel_size"],
-            tcn_dropout=ft_cfg["tcn_dropout"],
-            fusion_hidden_dims=ft_cfg.get("fusion_hidden_dims", [64, 32]),
-            fusion_dropout=ft_cfg.get("fusion_dropout", 0.7),
-            num_classes=t_cfg["num_classes"],
-        ).to(device)
+        if is_concat_fusion_tcn:
+            model = ConcatFusionTCNModel(
+                vis_dim=len(vis_cols),
+                aud_dim=len(aud_cols),
+                vis_channels=ft_cfg["vis_channels"],
+                aud_channels=ft_cfg["aud_channels"],
+                kernel_size=ft_cfg["kernel_size"],
+                tcn_dropout=ft_cfg["tcn_dropout"],
+                fusion_hidden_dims=ft_cfg.get("fusion_hidden_dims", [64, 32]),
+                fusion_dropout=ft_cfg.get("fusion_dropout", 0.7),
+                num_classes=t_cfg["num_classes"],
+            ).to(device)
+        else:
+            model = FusionTCNModel(
+                vis_dim=len(vis_cols),
+                aud_dim=len(aud_cols),
+                vis_channels=ft_cfg["vis_channels"],
+                aud_channels=ft_cfg["aud_channels"],
+                kernel_size=ft_cfg["kernel_size"],
+                tcn_dropout=ft_cfg["tcn_dropout"],
+                fusion_hidden_dims=ft_cfg.get("fusion_hidden_dims", [64, 32]),
+                fusion_dropout=ft_cfg.get("fusion_dropout", 0.7),
+                num_classes=t_cfg["num_classes"],
+            ).to(device)
 
         class_weights = compute_class_weights(train_y, t_cfg["num_classes"]).to(device)
         label_smoothing = t_cfg.get("label_smoothing", 0.0)
