@@ -8,7 +8,7 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
-from .data import map_phq_to_bin, resolve_label_mode
+from .data import map_phq_to_bin, resolve_binary_label, resolve_label_mode
 from .functional_features import extract_functional_features
 from .models.mlp import MLP
 from .training import get_class_names
@@ -43,7 +43,7 @@ def load_sessions_with_ids(
             if mode == "multiclass" and bins:
                 y = map_phq_to_bin(float(df["phq_score"].iloc[0]), bins)
             else:
-                y = int(df["phq_binary"].iloc[0])
+                y = resolve_binary_label(df, binning)
 
             sid = int(csv_path.stem.replace("_clean", ""))
             sessions[sid] = (X, y)

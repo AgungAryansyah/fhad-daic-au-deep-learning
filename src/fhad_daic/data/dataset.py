@@ -30,6 +30,13 @@ def resolve_label_mode(binning: dict | None) -> str:
     return "binary"
 
 
+def resolve_binary_label(df: pd.DataFrame, binning: dict | None) -> int:
+    threshold = (binning or {}).get("binary_threshold")
+    if threshold is not None:
+        return int(float(df["phq_score"].iloc[0]) >= threshold)
+    return int(df["phq_binary"].iloc[0])
+
+
 def resolve_modality(features_cfg: dict | None) -> str:
     return (features_cfg or {}).get("modality", "au")
 
@@ -70,7 +77,7 @@ def load_sessions(data_dir: Path, feature_cols: list[str], binning: dict | None 
         if mode == "multiclass":
             y = map_phq_to_bin(float(df["phq_score"].iloc[0]), bins)
         else:
-            y = int(df["phq_binary"].iloc[0])
+            y = resolve_binary_label(df, binning)
 
         sessions.append((X, y))
     return sessions
@@ -200,7 +207,7 @@ def load_fusion_sessions(
         if mode == "multiclass":
             y = map_phq_to_bin(float(vdf["phq_score"].iloc[0]), bins)
         else:
-            y = int(vdf["phq_binary"].iloc[0])
+            y = resolve_binary_label(vdf, binning)
 
         vis_sessions.append(X_v)
         aud_sessions.append(X_a)
@@ -299,7 +306,7 @@ def load_fusion_tcn_sessions(
         if mode == "multiclass":
             y = map_phq_to_bin(float(vdf["phq_score"].iloc[0]), bins)
         else:
-            y = int(vdf["phq_binary"].iloc[0])
+            y = resolve_binary_label(vdf, binning)
 
         vis_sessions.append(X_v)
         aud_sessions.append(X_a)

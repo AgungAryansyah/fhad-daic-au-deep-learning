@@ -15,6 +15,7 @@ from .dataset import (
     load_fusion_tcn_sessions,
     load_sessions,
     map_phq_to_bin,
+    resolve_binary_label,
     resolve_label_mode,
     resolve_modality,
     slide_windows,
