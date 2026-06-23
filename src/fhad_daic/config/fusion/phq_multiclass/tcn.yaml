@@ -142,3 +142,4 @@ training:
   early_stopping_patience: 15
   grad_clip_norm: 1.0
   label_smoothing: 0.1
+  grad_accum_steps: 4

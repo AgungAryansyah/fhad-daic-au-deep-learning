@@ -207,11 +207,13 @@ def train_epoch_fusion_tcn(
     criterion: nn.Module,
     device: torch.device,
     max_grad_norm: float = 0.0,
+    grad_accum_steps: int = 1,
 ) -> tuple[float, float, float]:
     model.train()
     total_loss = 0.0
     grad_norms = []
-    for X_v, mask_v, X_a, mask_a, y, aux_v, aux_a in loader:
+    optimizer.zero_grad()
+    for i, (X_v, mask_v, X_a, mask_a, y, aux_v, aux_a) in enumerate(loader):
         X_v = X_v.to(device)
         mask_v = mask_v.to(device)
         X_a = X_a.to(device)
@@ -219,15 +221,16 @@ def train_epoch_fusion_tcn(
         y = y.to(device)
         aux_v = {k: v.to(device) for k, v in aux_v.items()}
         aux_a = {k: v.to(device) for k, v in aux_a.items()}
-        optimizer.zero_grad()
-        loss = criterion(model(X_v, mask_v, X_a, mask_a, aux_v, aux_a), y)
+        loss = criterion(model(X_v, mask_v, X_a, mask_a, aux_v, aux_a), y) / grad_accum_steps
         loss.backward()
-        gn = _compute_grad_norm(model)
-        grad_norms.append(gn)
-        if max_grad_norm > 0:
-            nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-        optimizer.step()
-        total_loss += loss.item() * len(y)
+        total_loss += loss.item() * len(y) * grad_accum_steps
+        if (i + 1) % grad_accum_steps == 0 or (i + 1) == len(loader.dataset):
+            gn = _compute_grad_norm(model)
+            grad_norms.append(gn)
+            if max_grad_norm > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            optimizer.step()
+            optimizer.zero_grad()
     avg_loss = total_loss / len(loader.dataset)
     avg_grad = float(np.mean(grad_norms)) if grad_norms else 0.0
     max_grad = float(np.max(grad_norms)) if grad_norms else 0.0
@@ -415,8 +418,10 @@ def run_training(
             )
             dev_loss, dev_f1, dev_preds, dev_labels = evaluate_fusion(model, dev_loader, criterion, device)
         elif is_fusion_tcn:
+            ga = (config or {}).get("training", {}).get("grad_accum_steps", 1)
             train_loss, train_grad_avg, train_grad_max = train_epoch_fusion_tcn(
-                model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip,
+                model, train_loader, optimizer, criterion, device,
+                max_grad_norm=grad_clip, grad_accum_steps=ga,
             )
             dev_loss, dev_f1, dev_preds, dev_labels = evaluate_fusion_tcn(model, dev_loader, criterion, device)
         else:
