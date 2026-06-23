@@ -146,8 +146,8 @@ def main() -> None:
         epoch = load_checkpoint(model, checkpoint_path, device)
         print(f"Loaded checkpoint from epoch {epoch}")
 
-        _, f1, preds, labels = evaluate_fusion_tcn(model, dev_loader, nn.CrossEntropyLoss(), device)
-        print(f"\nDev Macro F1: {f1:.4f}")
+        _, f1, auc, preds, labels = evaluate_fusion_tcn(model, dev_loader, nn.CrossEntropyLoss(), device)
+        print(f"\nDev Macro F1: {f1:.4f}  AUC: {auc:.4f}")
         print(classification_report(labels, preds, target_names=class_names, zero_division=0))
         print("Confusion Matrix:")
         print(confusion_matrix(labels, preds))

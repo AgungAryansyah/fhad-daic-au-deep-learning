@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import wandb
 from dotenv import load_dotenv
-from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -96,20 +96,31 @@ def evaluate(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-) -> tuple[float, float, list[int], list[int]]:
+) -> tuple[float, float, float, list[int], list[int]]:
     model.eval()
     total_loss = 0.0
-    all_preds, all_labels = [], []
+    all_preds, all_labels, all_probs = [], [], []
     with torch.no_grad():
         for X, y in loader:
             X, y = X.to(device), y.to(device)
             logits = model(X)
             total_loss += criterion(logits, y).item() * len(y)
+            probs = torch.softmax(logits, dim=1).cpu()
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(y.cpu().tolist())
+            all_probs.extend(probs.tolist())
     avg_loss = total_loss / len(loader.dataset)
     macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
-    return avg_loss, macro_f1, all_preds, all_labels
+    auc = _compute_auc(all_labels, all_probs)
+    return avg_loss, macro_f1, auc, all_preds, all_labels
+
+def _compute_auc(labels: list[int], probs: list[list[float]]) -> float:
+    labels = np.array(labels)
+    probs = np.array(probs)
+    n_classes = probs.shape[1]
+    if n_classes == 2:
+        return float(roc_auc_score(labels, probs[:, 1]))
+    return float(roc_auc_score(labels, probs, multi_class="ovr", average="macro"))
 
 
 def train_epoch_mil(
@@ -149,11 +160,11 @@ def evaluate_mil(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-) -> tuple[float, float, list[int], list[int]]:
+) -> tuple[float, float, float, list[int], list[int]]:
     model.eval()
     total_loss = 0.0
     total_bags = 0
-    all_preds, all_labels = [], []
+    all_preds, all_labels, all_probs = [], [], []
     with torch.no_grad():
         for X, y, sids in loader:
             X, y, sids = X.to(device), y.to(device), sids.to(device)
@@ -161,11 +172,14 @@ def evaluate_mil(
             bag_y = get_bag_labels(y, sids)
             total_loss += criterion(logits, bag_y).item() * len(bag_y)
             total_bags += len(bag_y)
+            probs = torch.softmax(logits, dim=1).cpu()
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(bag_y.cpu().tolist())
+            all_probs.extend(probs.tolist())
     avg_loss = total_loss / max(total_bags, 1)
     macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
-    return avg_loss, macro_f1, all_preds, all_labels
+    auc = _compute_auc(all_labels, all_probs)
+    return avg_loss, macro_f1, auc, all_preds, all_labels
 
 
 def train_epoch_fusion(
@@ -242,10 +256,10 @@ def evaluate_fusion(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-) -> tuple[float, float, list[int], list[int]]:
+) -> tuple[float, float, float, list[int], list[int]]:
     model.eval()
     total_loss = 0.0
-    all_preds, all_labels = [], []
+    all_preds, all_labels, all_probs = [], [], []
     with torch.no_grad():
         for F_v, F_a, y, aux_v, aux_a in loader:
             F_v = F_v.to(device)
@@ -255,11 +269,14 @@ def evaluate_fusion(
             aux_a = {k: v.to(device) for k, v in aux_a.items()}
             logits = model(F_v, F_a, aux_v, aux_a)
             total_loss += criterion(logits, y).item() * len(y)
+            probs = torch.softmax(logits, dim=1).cpu()
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(y.cpu().tolist())
+            all_probs.extend(probs.tolist())
     avg_loss = total_loss / len(loader.dataset)
     macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
-    return avg_loss, macro_f1, all_preds, all_labels
+    auc = _compute_auc(all_labels, all_probs)
+    return avg_loss, macro_f1, auc, all_preds, all_labels
 
 
 def evaluate_fusion_tcn(
@@ -267,10 +284,10 @@ def evaluate_fusion_tcn(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-) -> tuple[float, float, list[int], list[int]]:
+) -> tuple[float, float, float, list[int], list[int]]:
     model.eval()
     total_loss = 0.0
-    all_preds, all_labels = [], []
+    all_preds, all_labels, all_probs = [], [], []
     with torch.no_grad():
         for X_v, mask_v, X_a, mask_a, y, aux_v, aux_a in loader:
             X_v = X_v.to(device)
@@ -282,11 +299,14 @@ def evaluate_fusion_tcn(
             aux_a = {k: v.to(device) for k, v in aux_a.items()}
             logits = model(X_v, mask_v, X_a, mask_a, aux_v, aux_a)
             total_loss += criterion(logits, y).item() * len(y)
+            probs = torch.softmax(logits, dim=1).cpu()
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(y.cpu().tolist())
+            all_probs.extend(probs.tolist())
     avg_loss = total_loss / len(loader.dataset)
     macro_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
-    return avg_loss, macro_f1, all_preds, all_labels
+    auc = _compute_auc(all_labels, all_probs)
+    return avg_loss, macro_f1, auc, all_preds, all_labels
 
 
 def _log_dev_metrics(epoch: int, all_preds: list[int], all_labels: list[int], class_names: list[str]) -> dict:
@@ -411,24 +431,24 @@ def run_training(
             train_loss, train_grad_avg, train_grad_max = train_epoch_mil(
                 model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip,
             )
-            dev_loss, dev_f1, dev_preds, dev_labels = evaluate_mil(model, dev_loader, criterion, device)
+            dev_loss, dev_f1, dev_auc, dev_preds, dev_labels = evaluate_mil(model, dev_loader, criterion, device)
         elif is_fusion:
             train_loss, train_grad_avg, train_grad_max = train_epoch_fusion(
                 model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip,
             )
-            dev_loss, dev_f1, dev_preds, dev_labels = evaluate_fusion(model, dev_loader, criterion, device)
+            dev_loss, dev_f1, dev_auc, dev_preds, dev_labels = evaluate_fusion(model, dev_loader, criterion, device)
         elif is_fusion_tcn:
             ga = (config or {}).get("training", {}).get("grad_accum_steps", 1)
             train_loss, train_grad_avg, train_grad_max = train_epoch_fusion_tcn(
                 model, train_loader, optimizer, criterion, device,
                 max_grad_norm=grad_clip, grad_accum_steps=ga,
             )
-            dev_loss, dev_f1, dev_preds, dev_labels = evaluate_fusion_tcn(model, dev_loader, criterion, device)
+            dev_loss, dev_f1, dev_auc, dev_preds, dev_labels = evaluate_fusion_tcn(model, dev_loader, criterion, device)
         else:
             train_loss, train_grad_avg, train_grad_max = train_epoch(
                 model, train_loader, optimizer, criterion, device, max_grad_norm=grad_clip,
             )
-            dev_loss, dev_f1, dev_preds, dev_labels = evaluate(model, dev_loader, criterion, device)
+            dev_loss, dev_f1, dev_auc, dev_preds, dev_labels = evaluate(model, dev_loader, criterion, device)
 
         current_lr = optimizer.param_groups[0]["lr"]
         if scheduler:
@@ -446,6 +466,7 @@ def run_training(
             "train/grad_norm_max": train_grad_max,
             "dev/loss": dev_loss,
             "dev/macro_f1": dev_f1,
+            "dev/auc": dev_auc,
             "lr": current_lr,
         }
         metrics.update(_log_dev_metrics(epoch, dev_preds, dev_labels, class_names))

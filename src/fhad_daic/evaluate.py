@@ -2,7 +2,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 from torch.utils.data import DataLoader
 
 
@@ -52,13 +52,15 @@ def run_evaluation(
     class_names: list[str] | None = None,
 ) -> dict:
     model.eval()
-    all_preds, all_labels = [], []
+    all_preds, all_labels, all_probs = [], [], []
     with torch.no_grad():
         for X, y in loader:
             X = X.to(device)
-            preds = model(X).argmax(dim=1).cpu().tolist()
-            all_preds.extend(preds)
+            logits = model(X)
+            probs = torch.softmax(logits, dim=1).cpu()
+            all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(y.tolist())
+            all_probs.extend(probs.tolist())
 
     if class_names is None:
         class_names = [str(i) for i in range(max(all_labels) + 1)]
@@ -66,12 +68,20 @@ def run_evaluation(
     report = classification_report(all_labels, all_preds, target_names=class_names, zero_division=0)
     cm = confusion_matrix(all_labels, all_preds)
 
+    probs_arr = np.array(all_probs)
+    n_classes = probs_arr.shape[1]
+    if n_classes == 2:
+        auc = float(roc_auc_score(all_labels, probs_arr[:, 1]))
+    else:
+        auc = float(roc_auc_score(all_labels, probs_arr, multi_class="ovr", average="macro"))
+
     print("\n" + "=" * 50)
     print("Evaluation Report")
     print("=" * 50)
     print(report)
+    print(f"AUC: {auc:.4f}")
     print("Confusion Matrix:")
     print(cm)
     print("=" * 50 + "\n")
 
-    return {"predictions": all_preds, "labels": all_labels, "confusion_matrix": cm}
+    return {"predictions": all_preds, "labels": all_labels, "confusion_matrix": cm, "auc": auc}
