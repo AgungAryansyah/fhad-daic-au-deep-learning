@@ -40,7 +40,7 @@ data:
   train_dir: "data/train"
   dev_dir: "data/dev"
   checkpoints_dir: "checkpoints"
-  # max_frames: 4096  # truncate long sessions for low-memory GPUs (null = full session)
+  max_frames: 4096
 
 features:
   visual:
