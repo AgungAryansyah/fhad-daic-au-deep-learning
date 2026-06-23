@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score

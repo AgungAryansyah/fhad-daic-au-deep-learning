@@ -16,11 +16,15 @@ sys.path.insert(0, str(project_root / "src"))
 from fhad_daic.config import get_feature_cols
 from fhad_daic.data import (
     AUWindowDataset,
+    FusionDataset,
     FusionTCNDataset,
+    MILWindowDataset,
     apply_scaler,
     collate_fusion_tcn,
+    collate_mil,
     fit_scaler,
     get_window_cache_path,
+    load_fusion_sessions,
     load_fusion_tcn_sessions,
     load_sessions,
     resolve_label_mode,
@@ -28,7 +32,7 @@ from fhad_daic.data import (
     slide_windows,
 )
 from fhad_daic.evaluate import load_checkpoint, run_evaluation
-from fhad_daic.models import FusionTCNModel, GRUModel, LSTMModel, MILTCN, TCN
+from fhad_daic.models import ConcatFusionModel, FusionModel, FusionTCNModel, GRUModel, LSTMModel, MILTCN, TCN
 from fhad_daic.training import evaluate_fusion_tcn, get_class_names
 
 
@@ -85,30 +89,94 @@ def _evaluate_windowed(device, cfg, checkpoint_path, class_names):
     label_mode = resolve_label_mode(cfg.get("binning"))
     modality = resolve_modality(cfg.get("features"))
     t_cfg = cfg["training"]
+    is_mil = t_cfg.get("model_type") == "mil"
     w_cfg = cfg["windowing"]
     ws = w_cfg["window_size"]
     st = w_cfg["stride"]
-    dev_pkl = get_window_cache_path("dev", ws, st, label_mode=label_mode, modality=modality)
+    mil = is_mil
+    dev_pkl = get_window_cache_path("dev", ws, st, mil=mil, label_mode=label_mode, modality=modality)
 
     if dev_pkl.exists():
         with open(dev_pkl, "rb") as f:
-            dev_X, dev_y = pickle.load(f)
+            data = pickle.load(f)
     else:
         train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols, binning=cfg.get("binning"), modality=modality)
         dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=cfg.get("binning"), modality=modality)
         scaler = fit_scaler(train_sessions)
         dev_sessions = apply_scaler(dev_sessions, scaler)
-        dev_X, dev_y = slide_windows(dev_sessions, ws, st)
+        if is_mil:
+            dev_X, dev_y, dev_sids = slide_windows(dev_sessions, ws, st, return_sids=True)
+            data = (dev_X, dev_y, dev_sids)
+        else:
+            dev_X, dev_y = slide_windows(dev_sessions, ws, st)
+            data = (dev_X, dev_y)
         dev_pkl.parent.mkdir(parents=True, exist_ok=True)
         with open(dev_pkl, "wb") as f:
-            pickle.dump((dev_X, dev_y), f)
+            pickle.dump(data, f)
 
-    dev_loader = DataLoader(AUWindowDataset(dev_X, dev_y), batch_size=t_cfg["batch_size"])
     model = _build_model_from_config(cfg, len(feature_cols), device)
     epoch = load_checkpoint(model, checkpoint_path, device)
 
-    result = run_evaluation(model, dev_loader, device, class_names=class_names)
-    return epoch, result
+    if is_mil:
+        dev_X, dev_y, dev_sids = data
+        dev_loader = DataLoader(MILWindowDataset(dev_X, dev_y, dev_sids), batch_size=t_cfg["batch_size"], collate_fn=collate_mil)
+        from fhad_daic.training import evaluate_mil
+        dev_loss, dev_f1, dev_auc, dev_preds, dev_labels = evaluate_mil(model, dev_loader, nn.CrossEntropyLoss(), device)
+        from sklearn.metrics import classification_report
+        report = classification_report(dev_labels, dev_preds, target_names=class_names, zero_division=0, output_dict=True)
+        return epoch, {"predictions": dev_preds, "labels": dev_labels, "auc": dev_auc, "macro_f1": dev_f1, "report": report}
+    else:
+        dev_X, dev_y = data
+        dev_loader = DataLoader(AUWindowDataset(dev_X, dev_y), batch_size=t_cfg["batch_size"])
+        result = run_evaluation(model, dev_loader, device, class_names=class_names)
+        return epoch, result
+
+
+def _evaluate_fusion_functional(device, cfg, checkpoint_path, class_names):
+    vis_cfg = cfg["features"]["visual"]
+    vis_cols = vis_cfg.get("au_regression", []) + vis_cfg.get("au_binary", []) + vis_cfg.get("pose", [])
+    aud_cols = cfg["features"]["audio"]["egemaps"]
+    binning = cfg.get("binning")
+
+    from fhad_daic.functional_features import extract_functional_features
+    train_dir = Path(cfg["data"]["train_dir"])
+    dev_dir = Path(cfg["data"]["dev_dir"])
+    train_vis, train_aud, train_y, train_aux_v, train_aux_a = load_fusion_sessions(train_dir, vis_cols, aud_cols, binning=binning)
+    dev_vis, dev_aud, dev_y, dev_aux_v, dev_aux_a = load_fusion_sessions(dev_dir, vis_cols, aud_cols, binning=binning)
+
+    train_vis_sessions = [(X, int(y)) for X, y in zip(train_vis, train_y)]
+    train_aud_sessions = [(X, int(y)) for X, y in zip(train_aud, train_y)]
+    vis_scaler = fit_scaler(train_vis_sessions)
+    aud_scaler = fit_scaler(train_aud_sessions)
+    train_vis_sessions = apply_scaler(train_vis_sessions, vis_scaler)
+    dev_vis_sessions = [(vis_scaler.transform(X), y) for X, y in zip(dev_vis, dev_y)]
+    train_aud_sessions = apply_scaler(train_aud_sessions, aud_scaler)
+    dev_aud_sessions = [(aud_scaler.transform(X), y) for X, y in zip(dev_aud, dev_y)]
+
+    train_Fv, _ = extract_functional_features(train_vis_sessions)
+    dev_Fv, _ = extract_functional_features(dev_vis_sessions)
+    train_Fa, _ = extract_functional_features(train_aud_sessions)
+    dev_Fa, _ = extract_functional_features(dev_aud_sessions)
+
+    from fhad_daic.training import evaluate_fusion
+    dev_loader = DataLoader(FusionDataset(dev_Fv, dev_Fa, dev_y, dev_aux_v, dev_aux_a), batch_size=len(dev_Fv))
+    fusion_cfg = cfg.get("fusion", {})
+    is_concat = cfg.get("training", {}).get("model_type") == "concat_fusion"
+    if is_concat:
+        model = ConcatFusionModel(vis_dim=dev_Fv.shape[1], aud_dim=dev_Fa.shape[1],
+                                   hidden_dims=fusion_cfg.get("hidden_dims", [64, 32]),
+                                   dropout=fusion_cfg.get("dropout", 0.7),
+                                   num_classes=cfg["training"]["num_classes"]).to(device)
+    else:
+        model = FusionModel(vis_dim=dev_Fv.shape[1], aud_dim=dev_Fa.shape[1],
+                             hidden_dims=fusion_cfg.get("hidden_dims", [64, 32]),
+                             dropout=fusion_cfg.get("dropout", 0.7),
+                             num_classes=cfg["training"]["num_classes"]).to(device)
+    epoch = load_checkpoint(model, checkpoint_path, device)
+    dev_loss, dev_f1, dev_auc, dev_preds, dev_labels = evaluate_fusion(model, dev_loader, nn.CrossEntropyLoss(), device)
+    from sklearn.metrics import classification_report
+    report = classification_report(dev_labels, dev_preds, target_names=class_names, zero_division=0, output_dict=True)
+    return epoch, {"predictions": dev_preds, "labels": dev_labels, "auc": dev_auc, "macro_f1": dev_f1, "report": report}
 
 
 def _evaluate_fusion_tcn(device, cfg, checkpoint_path, class_names):
@@ -204,13 +272,16 @@ def main() -> None:
 
         t_cfg = cfg.get("training", {})
         model_type = t_cfg.get("model_type", "tcn")
-        is_fusion_tcn = model_type == "fusion_tcn"
+        is_fusion_tcn = model_type in ("fusion_tcn", "concat_fusion_tcn")
+        is_fusion_func = model_type in ("fusion", "concat_fusion")
         binning = cfg.get("binning")
         class_names = get_class_names(binning)
 
         try:
             if is_fusion_tcn:
                 epoch, result = _evaluate_fusion_tcn(device, cfg, cp_path, class_names)
+            elif is_fusion_func:
+                epoch, result = _evaluate_fusion_functional(device, cfg, cp_path, class_names)
             else:
                 epoch, result = _evaluate_windowed(device, cfg, cp_path, class_names)
         except Exception as e:
