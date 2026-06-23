@@ -57,7 +57,7 @@ def run_evaluation(
         for X, y in loader:
             X = X.to(device)
             logits = model(X)
-            probs = torch.softmax(logits, dim=1).cpu()
+            probs = torch.nan_to_num(torch.softmax(logits, dim=1).cpu(), nan=0.0)
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(y.tolist())
             all_probs.extend(probs.tolist())

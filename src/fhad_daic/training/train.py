@@ -105,7 +105,8 @@ def evaluate(
             X, y = X.to(device), y.to(device)
             logits = model(X)
             total_loss += criterion(logits, y).item() * len(y)
-            probs = torch.softmax(logits, dim=1).cpu()
+            probs = torch.nan_to_num(torch.softmax(logits, dim=1).cpu(), nan=0.0)
+            probs = torch.nan_to_num(probs, nan=0.0)
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(y.cpu().tolist())
             all_probs.extend(probs.tolist())
@@ -117,10 +118,18 @@ def evaluate(
 def _compute_auc(labels: list[int], probs: list[list[float]]) -> float:
     labels = np.array(labels)
     probs = np.array(probs)
+    mask = ~np.isnan(probs).any(axis=1)
+    if mask.sum() < 2:
+        return 0.0
+    labels = labels[mask]
+    probs = probs[mask]
     n_classes = probs.shape[1]
     if n_classes == 2:
         return float(roc_auc_score(labels, probs[:, 1]))
-    return float(roc_auc_score(labels, probs, multi_class="ovr", average="macro"))
+    try:
+        return float(roc_auc_score(labels, probs, multi_class="ovr", average="macro"))
+    except ValueError:
+        return 0.0
 
 
 def train_epoch_mil(
@@ -172,7 +181,7 @@ def evaluate_mil(
             bag_y = get_bag_labels(y, sids)
             total_loss += criterion(logits, bag_y).item() * len(bag_y)
             total_bags += len(bag_y)
-            probs = torch.softmax(logits, dim=1).cpu()
+            probs = torch.nan_to_num(torch.softmax(logits, dim=1).cpu(), nan=0.0)
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(bag_y.cpu().tolist())
             all_probs.extend(probs.tolist())
@@ -269,7 +278,7 @@ def evaluate_fusion(
             aux_a = {k: v.to(device) for k, v in aux_a.items()}
             logits = model(F_v, F_a, aux_v, aux_a)
             total_loss += criterion(logits, y).item() * len(y)
-            probs = torch.softmax(logits, dim=1).cpu()
+            probs = torch.nan_to_num(torch.softmax(logits, dim=1).cpu(), nan=0.0)
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(y.cpu().tolist())
             all_probs.extend(probs.tolist())
@@ -299,7 +308,7 @@ def evaluate_fusion_tcn(
             aux_a = {k: v.to(device) for k, v in aux_a.items()}
             logits = model(X_v, mask_v, X_a, mask_a, aux_v, aux_a)
             total_loss += criterion(logits, y).item() * len(y)
-            probs = torch.softmax(logits, dim=1).cpu()
+            probs = torch.nan_to_num(torch.softmax(logits, dim=1).cpu(), nan=0.0)
             all_preds.extend(logits.argmax(dim=1).cpu().tolist())
             all_labels.extend(y.cpu().tolist())
             all_probs.extend(probs.tolist())
