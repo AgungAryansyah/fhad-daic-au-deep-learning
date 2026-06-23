@@ -16,3 +16,6 @@ runs/
 wandb/
 /data/
 cache/
+/data_degraded/
+/results/
+/shap_output/

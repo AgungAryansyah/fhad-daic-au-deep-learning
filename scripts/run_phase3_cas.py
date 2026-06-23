@@ -24,8 +24,8 @@ from fhad_daic.metrics import CLINICAL_AUDIO_FEATURES, CLINICAL_VISUAL_FEATURES,
 from fhad_daic.models import GRUModel, LSTMModel, MLP, MILTCN, TCN
 
 DEFAULT_KS = [1, 3, 5, 10, 20]
-N_BG = 50
-N_TEST = 10
+N_BG = 20
+N_TEST = 5
 
 
 def list_checkpoints(sweep_dir: Path) -> list[tuple[str, Path]]:
@@ -55,7 +55,7 @@ def build_model(cfg: dict, num_inputs: int, device: torch.device):
                           rnn_cfg["dropout"], nc, rnn_cfg.get("bidirectional", True))
     elif mt == "functional":
         mlp_cfg = cfg.get("mlp", {})
-        return MLP(num_inputs, mlp_cfg.get("hidden_dims", [64, 32]),
+        return MLP(num_inputs * 5, mlp_cfg.get("hidden_dims", [64, 32]),
                     mlp_cfg.get("dropout", 0.7), nc)
     elif mt == "mil":
         tcn_cfg = cfg["tcn"]
@@ -173,7 +173,7 @@ def main():
             continue
 
         # Restore dev F1 from checkpoint metadata
-        dev_f1 = raw.get("dev_f1", raw.get("best_dev_f1", 0.0))
+        dev_f1 = float(raw.get("dev_f1", raw.get("best_dev_f1", 0.0)))
 
         binning = cfg.get("binning")
         modality = resolve_modality(cfg.get("features"))
@@ -198,6 +198,9 @@ def main():
         except Exception as e:
             print(f"\n  SKIP {exp_name}: {e}")
             continue
+        finally:
+            del model
+            torch.cuda.empty_cache()
 
         row = {
             "experiment": exp_name,
