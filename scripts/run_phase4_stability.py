@@ -1,11 +1,13 @@
 import argparse
 import csv
+import gc
 import sys
 from pathlib import Path
 
 import numpy as np
 import shap
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -22,6 +24,7 @@ from fhad_daic.data import (
     resolve_modality,
     slide_windows,
 )
+from fhad_daic.functional_features import extract_functional_features
 from fhad_daic.metrics import PERTURBATION_TYPES, compute_pgi_pgu_empirical
 from fhad_daic.models import GRUModel, LSTMModel, MLP, MILTCN, TCN
 
@@ -56,7 +59,7 @@ def build_model(cfg: dict, num_inputs: int, device: torch.device):
                           rnn_cfg["dropout"], nc, rnn_cfg.get("bidirectional", True))
     elif mt == "functional":
         mlp_cfg = cfg.get("mlp", {})
-        return MLP(num_inputs, mlp_cfg.get("hidden_dims", [64, 32]),
+        return MLP(num_inputs * 5, mlp_cfg.get("hidden_dims", [64, 32]),
                     mlp_cfg.get("dropout", 0.7), nc)
     elif mt == "mil":
         tcn_cfg = cfg["tcn"]
@@ -70,38 +73,84 @@ def build_model(cfg: dict, num_inputs: int, device: torch.device):
 
 
 def run_shap_importance(model, X: np.ndarray, feature_cols: list[str], device: torch.device,
-                        model_type: str, n_test: int = 10) -> dict[str, float]:
-    bg_idx = np.random.choice(len(X), size=min(N_BG, len(X)), replace=False)
+                        model_type: str, n_test: int = 10, n_bg: int = 50) -> dict[str, float]:
+    if model_type == "mil":
+        return {}
+
+    bg_idx = np.random.choice(len(X), size=min(n_bg, len(X)), replace=False)
     bg_t = torch.from_numpy(X[bg_idx]).float().to(device)
     test_idx = np.random.choice(len(X), size=min(n_test, len(X)), replace=False)
     test_t = torch.from_numpy(X[test_idx]).float().to(device)
 
-    if model_type == "functional":
-        explainer = shap.KernelExplainer(
-            lambda x: model(torch.from_numpy(x).to(device)).detach().cpu().numpy(),
-            X[bg_idx].astype(np.float32),
-            link="identity",
-        )
-        shap_values = explainer.shap_values(test_t.cpu().numpy()[:min(n_test, 10)],
-                                             nsamples=min(2 * len(feature_cols), 100))
-    elif model_type == "mil":
-        return {}
-    else:
-        explainer = shap.GradientExplainer(model, bg_t)
-        shap_values = explainer.shap_values(test_t)
+    explainer = shap.GradientExplainer(model, bg_t)
+    shap_values = explainer.shap_values(test_t)
 
+    sv = np.asarray(shap_values)
+
+    # Multi-output explainers return a list of arrays (one per class).
     if isinstance(shap_values, list):
-        sv = shap_values[1] if len(shap_values) > 1 else shap_values[0]
-    elif shap_values.ndim == 3:
-        sv_arr = np.array(shap_values)
-        sv = sv_arr[:, :, 1] if sv_arr.shape[2] > 1 else sv_arr
-    else:
-        sv = np.array(shap_values)
+        sv = np.asarray(shap_values[1] if len(shap_values) > 1 else shap_values[0])
 
+    # If the last dimension is the number of classes, extract class 1.
+    if sv.ndim >= 3 and sv.shape[-1] > 1 and sv.shape[-1] != len(feature_cols):
+        sv = sv[..., 1]
+
+    sv = np.asarray(sv)
+
+    # Aggregate to one scalar per feature. Temporal models produce
+    # (n_samples, n_features, window_size) SHAP values.
     if sv.ndim == 3:
-        sv = sv.mean(axis=1)
-    feat_imp = np.abs(sv).mean(axis=0)
-    return {feature_cols[i]: float(feat_imp[i]) for i in range(len(feature_cols))}
+        if sv.shape[1] == len(feature_cols):
+            feat_imp = np.abs(sv).mean(axis=(0, 2))
+        elif sv.shape[2] == len(feature_cols):
+            feat_imp = np.abs(sv).mean(axis=(0, 1))
+        else:
+            feat_imp = np.abs(sv).mean(axis=(0, 1))
+    elif sv.ndim == 2:
+        feat_imp = np.abs(sv).mean(axis=0)
+    elif sv.ndim == 1:
+        feat_imp = np.abs(sv)
+    else:
+        feat_imp = np.array([])
+
+    def _to_scalar(v):
+        if isinstance(v, (np.ndarray, torch.Tensor)):
+            v = v.squeeze()
+            if v.numel() > 1:
+                return float(v.mean())
+            return float(v.item())
+        return float(v)
+
+    # Functional models have 5 stats per raw feature (mean, std, min, max, slope).
+    # Collapse them to one importance score per original feature.
+    if model_type == "functional" and len(feat_imp) == len(feature_cols) * 5:
+        feat_imp = np.array([
+            float(feat_imp[i * 5:(i + 1) * 5].mean())
+            for i in range(len(feature_cols))
+        ])
+
+    return {
+        feature_cols[i]: _to_scalar(feat_imp[i])
+        for i in range(len(feature_cols))
+        if i < len(feat_imp)
+    }
+
+
+def _slide_windows_limited(sessions, window_size, stride, max_windows):
+    """Slide windows but stop once max_windows is reached to avoid huge arrays."""
+    windows, labels = [], []
+    for X, y in sessions:
+        n = (len(X) - window_size) // stride + 1
+        if n <= 0:
+            continue
+        for start in range(0, len(X) - window_size + 1, stride):
+            windows.append(X[start : start + window_size])
+            labels.append(y)
+            if len(windows) >= max_windows:
+                return np.stack(windows), np.array(labels, dtype=np.int64)
+    if not windows:
+        return np.array([]), np.array([])
+    return np.stack(windows), np.array(labels, dtype=np.int64)
 
 
 def main():
@@ -110,6 +159,11 @@ def main():
     parser.add_argument("--output", type=str, default=None, help="Output CSV (default: results/stability_{sweep}.csv)")
     parser.add_argument("--ks", type=int, nargs="*", default=DEFAULT_KS, help="Top-k values for feature masking")
     parser.add_argument("--n-test", type=int, default=20, help="Number of test windows for SHAP")
+    parser.add_argument("--n-bg", type=int, default=N_BG, help="Number of background samples for SHAP")
+    parser.add_argument("--max-train-sessions", type=int, default=30, help="Max train sessions to slide")
+    parser.add_argument("--max-dev-sessions", type=int, default=30, help="Max dev sessions to slide")
+    parser.add_argument("--max-train-windows", type=int, default=500, help="Max train windows/sessions for SHAP")
+    parser.add_argument("--max-dev-windows", type=int, default=1000, help="Max dev windows/sessions for PGI/PGU")
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
 
@@ -150,7 +204,7 @@ def main():
 
         t_cfg = cfg.get("training", {})
         model_type = t_cfg.get("model_type", "tcn")
-        if model_type in ("fusion", "fusion_tcn", "concat_fusion", "concat_fusion_tcn"):
+        if model_type in ("fusion", "fusion_tcn", "concat_fusion", "concat_fusion_tcn", "mil"):
             continue
 
         binning = cfg.get("binning")
@@ -162,8 +216,36 @@ def main():
             dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=binning, modality=modality)
             scaler = fit_scaler(sessions)
             dev_sessions = apply_scaler(dev_sessions, scaler)
-            w_cfg = cfg["windowing"]
-            X_dev, y_dev = slide_windows(dev_sessions, w_cfg["window_size"], w_cfg["stride"])
+
+            # Keep memory bounded: only use a subset of sessions for windowing.
+            if len(dev_sessions) > args.max_dev_sessions:
+                idx = np.random.choice(len(dev_sessions), args.max_dev_sessions, replace=False)
+                dev_sessions = [dev_sessions[i] for i in idx]
+            if len(sessions) > args.max_train_sessions:
+                idx = np.random.choice(len(sessions), args.max_train_sessions, replace=False)
+                sessions = [sessions[i] for i in idx]
+
+            if model_type == "functional":
+                train_sessions = apply_scaler(sessions, scaler)
+                X_train, _ = extract_functional_features(train_sessions)
+                X_dev, y_dev = extract_functional_features(dev_sessions)
+
+                if len(X_train) > args.max_train_windows:
+                    idx = np.random.choice(len(X_train), args.max_train_windows, replace=False)
+                    X_train = X_train[idx]
+                if len(X_dev) > args.max_dev_windows:
+                    idx = np.random.choice(len(X_dev), args.max_dev_windows, replace=False)
+                    X_dev = X_dev[idx]
+                    y_dev = y_dev[idx]
+            else:
+                w_cfg = cfg["windowing"]
+                X_dev, y_dev = _slide_windows_limited(
+                    dev_sessions, w_cfg["window_size"], w_cfg["stride"], args.max_dev_windows
+                )
+                train_sessions = apply_scaler(sessions, scaler)
+                X_train, _ = _slide_windows_limited(
+                    train_sessions, w_cfg["window_size"], w_cfg["stride"], args.max_train_windows
+                )
 
             model = build_model(cfg, len(feature_cols), device).to(device)
             msd = raw.get("model_state_dict", raw.get("model_state", {}))
@@ -171,9 +253,8 @@ def main():
             model.eval()
 
             # Get SHAP importance once (use train data)
-            train_sessions = apply_scaler(sessions, scaler)
-            X_train, _ = slide_windows(train_sessions, w_cfg["window_size"], w_cfg["stride"])
-            importance = run_shap_importance(model, X_train, feature_cols, device, model_type, n_test=args.n_test)
+            importance = run_shap_importance(model, X_train, feature_cols, device, model_type,
+                                             n_test=args.n_test, n_bg=args.n_bg)
             if not importance:
                 continue
         except Exception as e:
@@ -189,7 +270,6 @@ def main():
             return DataLoader(AUWindowDataset(X_stacked, y_stacked), batch_size=min(256, len(X_stacked)))
 
         for top_k in args.ks:
-            import torch.nn as nn
             n_classes = t_cfg["num_classes"]
             counts = np.bincount(y_dev, minlength=n_classes).astype(np.float32)
             counts = np.clip(counts, a_min=1, a_max=None)
@@ -217,6 +297,10 @@ def main():
                 row[f"stability_{ptype}"] = results.get(f"stability_{ptype}", 0)
             row["f1_drop_mask_random"] = results.get("f1_drop_mask_random", 0)
             rows.append(row)
+
+        del model, X_train, X_dev, y_dev, importance, X_dev_list
+        gc.collect()
+        torch.cuda.empty_cache()
 
     if not rows:
         print("No results.")
