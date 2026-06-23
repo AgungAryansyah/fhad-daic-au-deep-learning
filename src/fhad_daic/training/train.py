@@ -118,6 +118,13 @@ def evaluate(
 def _compute_auc(labels: list[int], probs: list[list[float]]) -> float:
     labels = np.array(labels)
     probs = np.array(probs)
+    row_sums = probs.sum(axis=1, keepdims=True)
+    zero = (row_sums.squeeze() == 0)
+    if zero.any():
+        probs[zero] = 1.0 / probs.shape[1]
+    non_zero = ~zero
+    if non_zero.any():
+        probs[non_zero] = probs[non_zero] / row_sums[non_zero]
     mask = ~np.isnan(probs).any(axis=1)
     if mask.sum() < 2:
         return 0.0

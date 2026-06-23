@@ -71,8 +71,12 @@ def run_evaluation(
 
     probs_arr = np.array(all_probs)
     row_sums = probs_arr.sum(axis=1, keepdims=True)
-    row_sums = np.where(row_sums == 0, 1.0, row_sums)
-    probs_arr = probs_arr / row_sums
+    zero_rows = (row_sums.squeeze() == 0)
+    if zero_rows.any():
+        probs_arr[zero_rows] = 1.0 / probs_arr.shape[1]
+    nonzero = ~zero_rows
+    if nonzero.any():
+        probs_arr[nonzero] = probs_arr[nonzero] / row_sums[nonzero]
     n_classes = probs_arr.shape[1]
     if n_classes == 2:
         auc = float(roc_auc_score(all_labels, probs_arr[:, 1]))
