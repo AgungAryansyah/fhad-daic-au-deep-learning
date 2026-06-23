@@ -84,6 +84,30 @@ def _build_model_from_config(cfg: dict, num_inputs: int, device: torch.device, v
         ).to(device)
 
 
+def _evaluate_functional(device, cfg, checkpoint_path, class_names):
+    feature_cols = get_feature_cols(cfg)
+    modality = resolve_modality(cfg.get("features"))
+    binning = cfg.get("binning")
+
+    from fhad_daic.functional_features import extract_functional_features
+    train_sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols, binning=binning, modality=modality)
+    dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=binning, modality=modality)
+    scaler = fit_scaler(train_sessions)
+    dev_sessions = apply_scaler(dev_sessions, scaler)
+    dev_X, dev_y = extract_functional_features(dev_sessions)
+
+    from fhad_daic.models import MLP
+    mlp_cfg = cfg.get("mlp", {})
+    t_cfg = cfg["training"]
+    model = MLP(dev_X.shape[1], mlp_cfg.get("hidden_dims", [64, 32]),
+                mlp_cfg.get("dropout", 0.7), t_cfg["num_classes"]).to(device)
+    epoch = load_checkpoint(model, checkpoint_path, device)
+
+    dev_loader = DataLoader(AUWindowDataset(dev_X, dev_y), batch_size=len(dev_X))
+    result = run_evaluation(model, dev_loader, device, class_names=class_names)
+    return epoch, result
+
+
 def _evaluate_windowed(device, cfg, checkpoint_path, class_names):
     feature_cols = get_feature_cols(cfg)
     label_mode = resolve_label_mode(cfg.get("binning"))
@@ -274,6 +298,7 @@ def main() -> None:
         model_type = t_cfg.get("model_type", "tcn")
         is_fusion_tcn = model_type in ("fusion_tcn", "concat_fusion_tcn")
         is_fusion_func = model_type in ("fusion", "concat_fusion")
+        is_functional = model_type == "functional"
         binning = cfg.get("binning")
         class_names = get_class_names(binning)
 
@@ -282,6 +307,8 @@ def main() -> None:
                 epoch, result = _evaluate_fusion_tcn(device, cfg, cp_path, class_names)
             elif is_fusion_func:
                 epoch, result = _evaluate_fusion_functional(device, cfg, cp_path, class_names)
+            elif is_functional:
+                epoch, result = _evaluate_functional(device, cfg, cp_path, class_names)
             else:
                 epoch, result = _evaluate_windowed(device, cfg, cp_path, class_names)
         except Exception as e:

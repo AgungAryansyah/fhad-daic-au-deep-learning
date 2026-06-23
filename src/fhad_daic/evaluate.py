@@ -70,6 +70,9 @@ def run_evaluation(
     cm = confusion_matrix(all_labels, all_preds)
 
     probs_arr = np.array(all_probs)
+    row_sums = probs_arr.sum(axis=1, keepdims=True)
+    row_sums = np.where(row_sums == 0, 1.0, row_sums)
+    probs_arr = probs_arr / row_sums
     n_classes = probs_arr.shape[1]
     if n_classes == 2:
         auc = float(roc_auc_score(all_labels, probs_arr[:, 1]))
