@@ -1,0 +1,59 @@
+experiment_name: "tcn-gaze-only-12f"
+tags:
+  - tcn
+  - gaze-only
+  - channels-16-32-32
+  - kernel-7
+  - dropout-0.7
+  - w150
+  - s75
+  - 12f
+
+data:
+  cleaned_data_root: "data"
+  train_dir: "data/train"
+  dev_dir: "data/dev"
+  checkpoints_dir: "checkpoints"
+
+features:
+  include_confidence: true
+  confidence_aggregates: true
+  confidence:
+    - confidence
+  include_gaze: true
+  gaze:
+    - gaze_0_x
+    - gaze_0_y
+    - gaze_0_z
+    - gaze_1_x
+    - gaze_1_y
+    - gaze_1_z
+    - gaze_angle_x
+    - gaze_angle_y
+
+windowing:
+  window_size: 150
+  stride: 75
+
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 3
+  min_lr: 0.000001
+
+training:
+  num_classes: 2
+  batch_size: 256
+  num_workers: 12
+  learning_rate: 0.00005
+  num_epochs: 50
+  early_stopping_patience: 10
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1
+
+tcn:
+  num_channels: [16, 32, 32]
+  kernel_size: 7
+  dropout: 0.7
+  weight_decay: 0.001
