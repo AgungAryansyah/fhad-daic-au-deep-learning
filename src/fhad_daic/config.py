@@ -11,4 +11,6 @@ def get_feature_cols(cfg: dict) -> list[str]:
         cols = cols + f.get("confidence", ["confidence"])
         if f.get("confidence_aggregates", False):
             cols = cols + ["confidence_mean", "confidence_std", "confidence_min"]
+    if f.get("include_gaze", False):
+        cols = cols + f.get("gaze", [])
     return cols
