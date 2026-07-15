@@ -214,16 +214,17 @@ def main():
         try:
             sessions = load_sessions(Path(cfg["data"]["train_dir"]), feature_cols, binning=binning, modality=modality)
             dev_sessions = load_sessions(Path(cfg["data"]["dev_dir"]), feature_cols, binning=binning, modality=modality)
-            scaler = fit_scaler(sessions)
-            dev_sessions = apply_scaler(dev_sessions, scaler)
 
-            # Keep memory bounded: only use a subset of sessions for windowing.
+            # Keep memory bounded: only use a subset of sessions.
             if len(dev_sessions) > args.max_dev_sessions:
                 idx = np.random.choice(len(dev_sessions), args.max_dev_sessions, replace=False)
                 dev_sessions = [dev_sessions[i] for i in idx]
             if len(sessions) > args.max_train_sessions:
                 idx = np.random.choice(len(sessions), args.max_train_sessions, replace=False)
                 sessions = [sessions[i] for i in idx]
+
+            scaler = fit_scaler(sessions)
+            dev_sessions = apply_scaler(dev_sessions, scaler)
 
             if model_type == "functional":
                 train_sessions = apply_scaler(sessions, scaler)
@@ -298,7 +299,7 @@ def main():
             row["f1_drop_mask_random"] = results.get("f1_drop_mask_random", 0)
             rows.append(row)
 
-        del model, X_train, X_dev, y_dev, importance, X_dev_list
+        del model, sessions, dev_sessions, train_sessions, X_train, X_dev, y_dev, scaler, importance, X_dev_list
         gc.collect()
         torch.cuda.empty_cache()
 
