@@ -70,6 +70,16 @@ features:
   confidence_aggregates: true
   confidence:
     - confidence
+  include_gaze: false
+  # gaze:
+  #   - gaze_0_x
+  #   - gaze_0_y
+  #   - gaze_0_z
+  #   - gaze_1_x
+  #   - gaze_1_y
+  #   - gaze_1_z
+  #   - gaze_angle_x
+  #   - gaze_angle_y
 
 windowing:
   window_size: 150
