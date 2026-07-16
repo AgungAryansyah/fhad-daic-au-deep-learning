@@ -1,0 +1,56 @@
+experiment_name: "wav2vec-tcn"
+tags:
+  - tcn
+  - wav2vec
+  - channels-32-64-64
+  - kernel-7
+  - dropout-0.5
+  - wd-1e-3
+  - lr-5e-5
+  - weighted-ce
+  - label-smooth-0.1
+  - adam
+  - plateau
+  - grad-clip-1.0
+  - w150
+  - s75
+  - modality-wav2vec
+  - audio
+
+features:
+  modality: "wav2vec"
+  wav2vec_dim: 768
+
+data:
+  cleaned_data_root: "data"
+  train_dir: "data/train"
+  dev_dir: "data/dev"
+  checkpoints_dir: "checkpoints"
+
+windowing:
+  window_size: 150
+  stride: 75
+
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 3
+  min_lr: 0.000001
+
+training:
+  model_type: "tcn"
+  num_classes: 2
+  batch_size: 256
+  num_workers: 12
+  learning_rate: 0.00005
+  num_epochs: 50
+  early_stopping_patience: 10
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1
+
+tcn:
+  num_channels: [32, 64, 64]
+  kernel_size: 7
+  dropout: 0.5
+  weight_decay: 0.001

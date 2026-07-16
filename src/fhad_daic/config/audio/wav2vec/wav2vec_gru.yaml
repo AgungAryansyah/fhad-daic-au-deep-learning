@@ -1,0 +1,50 @@
+experiment_name: "wav2vec-gru"
+tags:
+  - gru
+  - wav2vec
+  - hidden-64
+  - layers-2
+  - bidirectional
+  - dropout-0.5
+  - w150
+  - s75
+  - modality-wav2vec
+  - audio
+
+features:
+  modality: "wav2vec"
+  wav2vec_dim: 768
+
+data:
+  cleaned_data_root: "data"
+  train_dir: "data/train"
+  dev_dir: "data/dev"
+  checkpoints_dir: "checkpoints"
+
+windowing:
+  window_size: 150
+  stride: 75
+
+scheduler:
+  type: "plateau"
+  mode: "min"
+  factor: 0.5
+  patience: 3
+  min_lr: 0.000001
+
+gru:
+  hidden_size: 64
+  num_layers: 2
+  dropout: 0.5
+  bidirectional: true
+
+training:
+  model_type: "gru"
+  num_classes: 2
+  batch_size: 256
+  num_workers: 12
+  learning_rate: 0.00005
+  num_epochs: 50
+  early_stopping_patience: 10
+  grad_clip_norm: 1.0
+  label_smoothing: 0.1
