@@ -6,6 +6,9 @@ def get_feature_cols(cfg: dict) -> list[str]:
     f = cfg.get("features", {})
     if get_modality(cfg) == "egemaps":
         return f.get("egemaps", [])
+    if get_modality(cfg) == "wav2vec":
+        dim = f.get("wav2vec_dim", 768)
+        return [f"w2v_{i}" for i in range(dim)]
     cols = f.get("au_regression", []) + f.get("au_binary", []) + f.get("pose", [])
     if f.get("include_confidence", False):
         cols = cols + f.get("confidence", ["confidence"])

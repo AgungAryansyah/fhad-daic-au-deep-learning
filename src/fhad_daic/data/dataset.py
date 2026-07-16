@@ -52,15 +52,25 @@ def load_sessions(data_dir: Path, feature_cols: list[str], binning: dict | None 
     mode = resolve_label_mode(binning)
     bins = (binning or {}).get("bins", DEFAULT_BINS)
 
-    glob_pattern = "*_egemaps_clean.csv" if modality == "egemaps" else "*_clean.csv"
+    if modality == "egemaps":
+        glob_pattern = "*_egemaps_clean.csv"
+        fill_value = 0.0
+    elif modality == "wav2vec":
+        glob_pattern = "*_wav2vec_clean.csv"
+        fill_value = 0.0
+    else:
+        glob_pattern = "*_clean.csv"
+        fill_value = 0.5
 
     for csv_path in sorted(data_dir.glob(glob_pattern)):
+        if modality == "au" and ("egemaps" in csv_path.name or "wav2vec" in csv_path.name):
+            continue
         df = pd.read_csv(csv_path)
         if df.empty:
             continue
         missing = [c for c in feature_cols if c not in df.columns]
         for c in missing:
-            df[c] = 0.5
+            df[c] = fill_value
         X = df[feature_cols].values.astype(np.float32)
         if "confidence_mean" in feature_cols:
             ci = feature_cols.index("confidence")
@@ -71,7 +81,7 @@ def load_sessions(data_dir: Path, feature_cols: list[str], binning: dict | None 
             X[:, feature_cols.index("confidence_std")] = s.fillna(0.0).values
             m = conf.rolling(w, center=True, min_periods=1).min()
             X[:, feature_cols.index("confidence_min")] = m.bfill().ffill().values
-        if modality == "egemaps":
+        if modality in ("egemaps", "wav2vec"):
             X = np.nan_to_num(X, nan=0.0)
 
         if mode == "multiclass":
